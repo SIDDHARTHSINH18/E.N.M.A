@@ -300,6 +300,54 @@ class AgentPipeline:
         return result
 
     # ========================================================
+    # RETRY RE-EXECUTION (M3)
+    # ========================================================
+
+    async def retry_execution(self, task_id: str) -> Optional[dict]:
+        """
+        Re-execute a retried task's recorded steps through the
+        same path as the first attempt: TaskRunner ->
+        AutomationEngine -> Agent -> PermissionPolicy ->
+        ToolRegistry.
+
+        The planner is never called and no new plan is
+        generated — the task's existing stored steps are
+        reused exactly as planned. A task with no recorded
+        executable steps (advisory plan) returns None and
+        keeps the plain re-queued PENDING semantics.
+
+        The runner's start gate still requires a PENDING task
+        and refuses through ValueError, so a cancellation that
+        races the retry refuses safely; state-machine
+        validation and the retry limit live in TaskService and
+        are untouched.
+        """
+
+        steps = self._runner.planned_steps(task_id)
+
+        if not steps:
+            return None
+
+        try:
+            execution = await self._runner.start_async(task_id, steps)
+        except Exception as error:
+            self._audit(
+                task_id,
+                AuditStage.ERROR,
+                event="retry_execution_refused",
+                data={"detail": _error_text(error)},
+            )
+            raise
+
+        self._audit_steps(task_id, self._runner.planned_steps(task_id))
+
+        self._audit_pause(task_id, execution)
+
+        self._finalize(self._tasks.get(task_id))
+
+        return execution
+
+    # ========================================================
     # APPROVAL DECISION (audit record only)
     # ========================================================
 

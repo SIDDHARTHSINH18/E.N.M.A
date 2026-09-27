@@ -20,6 +20,8 @@ There is exactly one model gateway (core.orchestrator)
 and this module creates none.
 """
 
+import os
+
 from backend.agents.executor import Agent
 from backend.agents.memory_bridge import MemoryBridge
 from backend.approval.service import ApprovalService
@@ -227,8 +229,26 @@ orchestrator.audit_hook = audit_log.append
 # the singletons above. The HTTP layer imports these and names
 # their stage order; it does not build its own collaborators.
 
+# TEMPORARY (M3 testing): the planner points at the Groq
+# provider because Gemini generation is currently quota-exhausted
+# (HTTP 429 RESOURCE_EXHAUSTED) while the same Groq provider and
+# model serve chat successfully. Purely a provider selection on
+# the existing gateway — no new client, no M3 logic touched.
+# Groq requires an explicit model on every request, so the
+# configured GROQ_MODEL is passed through; other providers keep
+# the gateway default (model=None).
+# Reversible without a code change: set ENMA_PLANNER_PROVIDER=gemini
+# (or remove the override once Gemini quota is available again).
+planner_provider = os.getenv("ENMA_PLANNER_PROVIDER", "groq")
+
 planner = Planner(
     orchestrator,
+    provider_name=planner_provider,
+    model=(
+        os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        if planner_provider == "groq"
+        else None
+    ),
     tool_catalog=[
         tool.name for tool in tool_registry.list_tools()
     ],

@@ -52,6 +52,7 @@ export default function MainLayout({
   memoryItems = [],
   memoryLoading = false,
   deleteMemory = () => {},
+  onTaskAction = null,
   renderGhostResponse = () => {},
   onLogout = () => {}
 }) {
@@ -200,6 +201,7 @@ export default function MainLayout({
               contextNode={contextNode}
               onClearContext={() => setSelectedNode(null)}
               onNewChat={newChat}
+              onTaskAction={onTaskAction}
               renderGhostResponse={renderGhostResponse}
             />
           ) : (

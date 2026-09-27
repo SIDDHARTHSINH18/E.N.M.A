@@ -1,4 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+
+/**
+ * Lifecycle action availability per task status:
+ * PENDING/RUNNING -> Cancel, FAILED -> Retry,
+ * terminal states (COMPLETED/CANCELLED) -> no action.
+ */
+export function lifecycleActionFor(status) {
+  const key = (status || "").toUpperCase();
+
+  if (key === "PENDING" || key === "RUNNING") return "cancel";
+  if (key === "FAILED") return "retry";
+
+  return null;
+}
 
 /**
  * Compact, structured presentation for a POST /api/tasks
@@ -82,7 +96,7 @@ export function extractTaskResult(data) {
   return "";
 }
 
-export default function TaskCard({ task }) {
+export default function TaskCard({ task, onTaskAction }) {
   const sections = useMemo(() => {
     const execution = task?.execution || {};
     const planning = task?.planning || {};
@@ -102,6 +116,7 @@ export default function TaskCard({ task }) {
     return {
       title: taskInfo.title || planning.request || "",
       status,
+      taskId: taskInfo.id || task?.id || null,
       planningReady: Boolean(planning.ready),
       planningSteps: steps.length,
       assumptions,
@@ -110,11 +125,38 @@ export default function TaskCard({ task }) {
     };
   }, [task]);
 
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState(null);
+
   if (!task) {
     return null;
   }
 
   const tone = statusTone(sections.status);
+  const action = lifecycleActionFor(sections.status);
+
+  const runLifecycleAction = async () => {
+    if (!action || !sections.taskId || actionBusy || !onTaskAction) {
+      return;
+    }
+
+    setActionBusy(true);
+    setActionError(null);
+
+    try {
+      await onTaskAction(action, sections.taskId);
+    } catch (error) {
+      setActionError(
+        error?.message
+          ? `${action === "cancel" ? "Cancel" : "Retry"} failed: ${error.message}`
+          : `${action === "cancel" ? "Cancel" : "Retry"} failed.`,
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const actionLabel = action === "cancel" ? "Cancel" : "Retry";
 
   return (
     <div className={`task-card task-card-${tone}`}>
@@ -181,6 +223,25 @@ export default function TaskCard({ task }) {
         <div className="task-card-note">
           Approval required · id {sections.approvalId}
         </div>
+      )}
+
+      {action && sections.taskId && (
+        <button
+          className="task-card-lifecycle-btn"
+          onClick={runLifecycleAction}
+          disabled={actionBusy}
+          aria-label={`${actionLabel} task`}
+        >
+          {actionBusy
+            ? actionLabel === "Cancel"
+              ? "Cancelling…"
+              : "Retrying…"
+            : actionLabel}
+        </button>
+      )}
+
+      {actionError && (
+        <div className="task-card-note task-card-error">{actionError}</div>
       )}
 
       <details className="task-card-details">

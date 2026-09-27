@@ -15,6 +15,7 @@ export default function ChatWorkspace({
   contextNode = null,
   onClearContext = () => {},
   onNewChat = () => {},
+  onTaskAction = null,
   renderGhostResponse = () => null,
 }) {
   const threadRef = useRef(null);
@@ -74,7 +75,12 @@ export default function ChatWorkspace({
                 {item.content
                   ? renderGhostResponse(item.content)
                   : <span className="chat-streaming">▍</span>}
-                {item.taskData && <TaskCard task={item.taskData} />}
+                {item.taskData && (
+                  <TaskCard
+                    task={item.taskData}
+                    onTaskAction={onTaskAction}
+                  />
+                )}
                 {item.pages && item.pages.length > 0 && (
                   <div className="chat-msg-sources">
                     <span>SOURCES</span>

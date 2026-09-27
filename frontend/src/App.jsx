@@ -10,6 +10,7 @@ import MainLayout from "./components/layout/MainLayout";
 import NeuralGraph from "./components/visualization/NeuralGraph";
 import authService from "./services/authService";
 import graphService from "./services/graphService";
+import taskService from "./services/taskService";
 import { API_URL } from "./utils/constants";
 import { readJSON, saveJSON } from "./utils/helpers";
 import { buildVisualGraph } from "./utils/helpers";
@@ -769,8 +770,51 @@ function App() {
     }
   }
 
-  function updateAssistantMessage(content, pages, taskData = null) {
-    setMessages((prev) => {
+  // M3 task lifecycle: run a Cancel/Retry action from a TaskCard,
+  // then refresh the task state so the card shows the new status.
+  async function handleTaskAction(action, taskId) {
+    if (action === "cancel") {
+      await taskService.cancelTask(taskId);
+    } else if (action === "retry") {
+      await taskService.retryTask(taskId);
+    } else {
+      throw new Error(`Unknown task action: ${action}`);
+    }
+
+    // Refresh through the existing GET endpoint; the TaskCard
+    // re-renders from the updated message state.
+    const refreshed = await taskService.getTask(taskId);
+
+    setMessages((prev) =>
+      prev.map((item) => {
+        if (
+          item.role === "assistant" &&
+          item.taskData &&
+          (item.taskData.task?.id === taskId || item.taskData.id === taskId)
+        ) {
+          return {
+            ...item,
+            taskData: {
+              ...item.taskData,
+              task: {
+                ...item.taskData.task,
+                status: refreshed.status,
+                result: refreshed.result,
+                error: refreshed.error,
+              },
+              execution: {
+                ...item.taskData.execution,
+                state: refreshed.status,
+              },
+            },
+          };
+        }
+        return item;
+      }),
+    );
+  }
+
+  function updateAssistantMessage(content, pages, taskData = null) {    setMessages((prev) => {
       const updated = [...prev];
       for (let i = updated.length - 1; i >= 0; i--) {
         if (updated[i].role === "assistant") {
@@ -1221,6 +1265,7 @@ function App() {
       setActiveDrawer={setActiveDrawer}
       activeDrawer={activeDrawer}
       messages={messages}
+      onTaskAction={handleTaskAction}
       message={message}
       setMessage={setMessage}
       loading={loading}

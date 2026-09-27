@@ -467,10 +467,32 @@ async def retry_task(task_id: str, http_request: Request):
         data={"retry_count": task.retry_count},
     )
 
+    # M3 retry re-execution: the task's existing stored steps
+    # run again through the existing runner path — the planner
+    # is not called and no new plan is generated. Tasks with
+    # only advisory plans (no recorded steps) keep the plain
+    # re-queued PENDING semantics. A ValueError here means the
+    # runner's start gate refused (e.g. a cancellation racing
+    # the retry); the task keeps its current audited state.
+    try:
+        execution = await build_pipeline().retry_execution(task_id)
+    except ValueError:
+        execution = None
+
+    task = task_service.get(task_id, owner=_owner(http_request))
+
     return {
         "task_id": task.id,
         "status": task.status.value,
         "retry_count": task.retry_count,
+        "execution": (
+            {
+                "state": execution["state"].value,
+                "reason": execution.get("reason"),
+            }
+            if execution
+            else None
+        ),
     }
 
 
