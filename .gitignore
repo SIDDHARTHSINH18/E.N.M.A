@@ -36,3 +36,4 @@ desktop/dist-new/
 test_gemini.py
 test_gemini_api.py
 backend/providers/New Text Document.txt
+desktop/runtime/

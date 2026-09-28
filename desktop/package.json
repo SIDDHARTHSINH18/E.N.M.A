@@ -36,6 +36,10 @@
       {
         "from": "../requirements.txt",
         "to": "backend-project/requirements.txt"
+      },
+      {
+        "from": "runtime",
+        "to": "runtime"
       }
     ],
     "win": {

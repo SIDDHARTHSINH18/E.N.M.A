@@ -176,7 +176,17 @@ let backendReason = "";
 
 // Candidates are validated by actually importing the backend's
 // required modules — a name on PATH is not proof of a working
-// runtime. ENMA_PYTHON (if set) always wins.
+// runtime. The packaged embedded runtime is preferred (ENMA is
+// self-contained); an explicit ENMA_PYTHON still wins over the
+// PATH fallbacks for diagnostics/development, but not over the
+// bundled runtime an installed ENMA ships with.
+function embeddedPythonPath() {
+  if (!app.isPackaged) {
+    return null;
+  }
+  return path.join(process.resourcesPath, "runtime", "python.exe");
+}
+
 function validatePython(candidate) {
   // "python" or ["py", "-3"] — both normalized here.
   const [file, ...prefix] = Array.isArray(candidate)
@@ -193,8 +203,46 @@ function validatePython(candidate) {
   });
 }
 
+// Best-effort check for the ML retrieval stack. The backend
+// starts and serves without it (semantic retrieval is lazy),
+// so a miss is a loud warning, not a startup failure.
+function warnIfMlStackMissing(candidate) {
+  const [file, ...prefix] = Array.isArray(candidate)
+    ? candidate
+    : [candidate];
+
+  execFile(
+    file,
+    [...prefix, "-c", "import sentence_transformers"],
+    { timeout: 60000 },
+    (error) => {
+      if (error) {
+        console.warn(
+          "ENMA embedded runtime: sentence_transformers is not " +
+          "importable; document/semantic retrieval will be " +
+          "unavailable. All other backend features are unaffected."
+        );
+      }
+    }
+  );
+}
+
 async function resolvePython() {
   const candidates = [];
+
+  const embedded = embeddedPythonPath();
+  if (embedded) {
+    if (!fs.existsSync(embedded)) {
+      console.error(
+        `ENMA embedded runtime missing at ${embedded}; ` +
+        "falling back to the system Python. The installed " +
+        "application may be incomplete — reinstall ENMA."
+      );
+    } else {
+      candidates.push(embedded);
+    }
+  }
+
   if (process.env.ENMA_PYTHON) {
     candidates.push(process.env.ENMA_PYTHON);
   }
@@ -205,6 +253,9 @@ async function resolvePython() {
     const ok = await validatePython(parts);
     if (ok) {
       console.log(`ENMA backend runtime: ${candidate}`);
+      if (candidate === embedded) {
+        warnIfMlStackMissing(parts);
+      }
       return parts;
     }
     console.warn(
@@ -330,6 +381,10 @@ function backendRuntimeEnv() {
       "audit.jsonl"
     ),
     ENMA_WORKSPACE_ROOT: userDataDir("workspace"),
+    // HuggingFace model cache (all-MiniLM-L6-v2, downloaded on
+    // first semantic retrieval) must land in user-writable space,
+    // never in the read-only resources/ install tree.
+    HF_HOME: userDataDir("hf-cache"),
   };
 }
 
