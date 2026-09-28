@@ -63,6 +63,12 @@ class SpecStep:
     description: str
     tool: str
     params: Dict[str, Any] = field(default_factory=dict)
+    # Orders (into this spec's executable steps) of steps that
+    # must complete first. Always strictly earlier than ``order``
+    # — advisory (tool-less) planned steps are dropped here, so
+    # planned indices are remapped onto the dense executable
+    # numbering, and references to dropped steps are discarded.
+    depends_on: Tuple[int, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -70,6 +76,7 @@ class SpecStep:
             "description": self.description,
             "tool": self.tool,
             "params": dict(self.params),
+            "depends_on": list(self.depends_on),
         }
 
 
@@ -191,7 +198,12 @@ def build_execution_spec(
     steps: List[SpecStep] = []
     risks: List[RiskLevel] = []
 
-    for planned in planning.steps:
+    # Planned indices -> dense executable orders. Advisory
+    # (tool-less) planned steps are dropped and get no mapping,
+    # so a dependency that points at one is discarded.
+    order_of_planned: Dict[int, int] = {}
+
+    for planned_index, planned in enumerate(planning.steps):
         # Tool-less steps are advisory proposals: never executed.
         if not planned.tool or not str(planned.tool).strip():
             continue
@@ -201,17 +213,31 @@ def build_execution_spec(
         risk = _tool_risk(registry, tool_name)
         risks.append(risk)
 
+        order = len(steps)
+
+        order_of_planned[planned_index] = order
+
         steps.append(
             SpecStep(
                 # Sequential renumbering: AutomationEngine orders
                 # by this value, and dropped advisory steps must
                 # not leave gaps.
-                order=len(steps),
+                order=order,
                 description=(
                     planned.description or f"Execute {tool_name}"
                 ).strip(),
                 tool=tool_name,
                 params=dict(planned.params or {}),
+                depends_on=tuple(
+                    sorted(
+                        {
+                            order_of_planned[dep]
+                            for dep in planned.depends_on
+                            if dep in order_of_planned
+                            and order_of_planned[dep] < order
+                        }
+                    )
+                ),
             )
         )
 

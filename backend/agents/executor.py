@@ -123,7 +123,7 @@ class Agent:
         try:
             output = self._execute_tool(
                 tool_name,
-                dict(params or {}),
+                params if params is not None else {},
             )
 
             # An awaitable can only come from an async tool
@@ -225,7 +225,7 @@ class Agent:
         try:
             output = self._execute_tool(
                 tool_name,
-                dict(params or {}),
+                params if params is not None else {},
             )
 
             # Awaitable tool implementations (e.g. the model

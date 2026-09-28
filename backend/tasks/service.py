@@ -14,7 +14,7 @@ Never the reverse.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from backend.core.task import (
     Task,
@@ -26,15 +26,52 @@ from backend.core.task import (
 
 class TaskService:
     """
-    Minimal synchronous in-memory task store.
+    Minimal synchronous task store around the existing Task
+    model, with optional JSONL persistence (M4).
 
     Keys are Task.id (UUID4 strings assigned by the
     model's default_factory, so every stored task has
     a unique identity by construction).
+
+    When ``persistence`` is provided (or the default store is
+    constructible), tasks are reloaded from disk at startup and
+    every mutation is appended, so task history survives a
+    process restart. Persistence is strictly bookkeeping: it
+    never validates, decides or executes anything.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        persistence: Optional["TaskPersistence"] = None,
+        persistent: bool = False,
+    ):
         self._tasks: Dict[str, Task] = {}
+
+        if persistent:
+            # Default store (env GHOST_TASKS_PATH or the
+            # backend/data convention) — used by production
+            # wiring; plain TaskService() stays in-memory.
+            if persistence is None:
+                from backend.tasks.persistence import (
+                    TaskPersistence,
+                )
+
+                persistence = TaskPersistence()
+
+            self._persistence = persistence
+            self._load_persisted()
+        else:
+            # In-memory only: direct constructions (tests,
+            # ad-hoc use) keep the exact historical semantics.
+            self._persistence = None
+
+    def _load_persisted(self) -> None:
+        for task_id, task in self._persistence.load().items():
+            self._tasks[task_id] = task
+
+    def _persist(self, task: Task) -> None:
+        if self._persistence is not None:
+            self._persistence.record(task)
 
     def create(
         self,
@@ -60,6 +97,8 @@ class TaskService:
         )
 
         self._tasks[task.id] = task
+
+        self._persist(task)
 
         return task
 
@@ -136,6 +175,8 @@ class TaskService:
             TaskStatus.CANCELLED,
         ):
             task.completed_at = datetime.now()
+
+        self._persist(task)
 
         return task
 

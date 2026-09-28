@@ -43,8 +43,13 @@ from backend.tools.builtin.fs import (
     fs_file_exists,
     fs_list_directory,
     fs_read_file,
+    fs_write_file,
 )
+from backend.tools.builtin.memory_tools import memory_search
 from backend.tools.builtin.model import model_generate
+from backend.tools.builtin.summarize import summarize
+from backend.tools.builtin.web_fetch import web_fetch
+from backend.tools.builtin.web_search import web_search
 from backend.tools.registry import RiskLevel, ToolRegistry
 
 
@@ -96,6 +101,53 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         category="model",
         risk_level=RiskLevel.SAFE,
     )
+    registry.register(
+        name="memory_search",
+        description=(
+            "Search the user's persistent memory store and "
+            "return the best matching records (read-only)."
+        ),
+        category="memory",
+        risk_level=RiskLevel.SAFE,
+    )
+    registry.register(
+        name="summarize",
+        description=(
+            "Condense one text into a shorter factual summary "
+            "through the model gateway (read-only)."
+        ),
+        category="model",
+        risk_level=RiskLevel.SAFE,
+    )
+    registry.register(
+        name="fs_write_file",
+        description=(
+            "Write UTF-8 text content into one file inside the "
+            "sandboxed workspace root (requires user approval)."
+        ),
+        category="filesystem",
+        risk_level=RiskLevel.SENSITIVE,
+    )
+    registry.register(
+        name="web_search",
+        description=(
+            "Search the public web through the configured "
+            "search provider and return result leads (read-"
+            "only; requires a provider to be configured)."
+        ),
+        category="web",
+        risk_level=RiskLevel.SAFE,
+    )
+    registry.register(
+        name="web_fetch",
+        description=(
+            "Retrieve one public HTTP(S) page with SSRF, "
+            "size, time and redirect limits, and extract its "
+            "readable text (read-only)."
+        ),
+        category="web",
+        risk_level=RiskLevel.SAFE,
+    )
 
 
 register_builtin_tools(tool_registry)
@@ -121,7 +173,12 @@ TOOL_IMPLEMENTATIONS = {
     "fs_read_file": fs_read_file,
     "fs_list_directory": fs_list_directory,
     "fs_file_exists": fs_file_exists,
+    "fs_write_file": fs_write_file,
     "model_generate": model_generate,
+    "memory_search": memory_search,
+    "summarize": summarize,
+    "web_search": web_search,
+    "web_fetch": web_fetch,
 }
 
 
@@ -254,11 +311,26 @@ planner = Planner(
     ],
 )
 
-task_service = TaskService()
+# Task history persists across restarts (M4). The path comes
+# from GHOST_TASKS_PATH (packaged desktop runtime redirects it
+# into the user's data directory, like memory/audit).
+task_service = TaskService(persistent=True)
+
+# Bounded automatic recovery is enabled only for explicitly
+# SAFE tools: re-running them cannot write anything or surface
+# an approval decision again. SENSITIVE/DANGEROUS tools never
+# auto-retry — a paused or denied workflow keeps its exact
+# human decision.
+_retryable_tools = frozenset(
+    tool.name
+    for tool in tool_registry.list_tools()
+    if tool.risk_level is RiskLevel.SAFE
+)
 
 task_runner = TaskRunner(
     task_service=task_service,
     automation_engine=automation_engine,
     approvals=approval_service,
     reflection_engine=reflection_engine,
+    retryable_tools=_retryable_tools,
 )

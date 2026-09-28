@@ -233,7 +233,7 @@ def test_skill_result_reuses_task_status():
 # Builtin skills
 # ============================================================
 
-def test_builtin_discovery_registers_five_skills():
+def test_builtin_discovery_registers_seven_skills():
     registry = SkillRegistry()
     register_builtin_skills(registry)
 
@@ -241,11 +241,13 @@ def test_builtin_discovery_registers_five_skills():
     assert names == {
         "memory-recall",
         "note-summarizer",
+        "document-creation",
+        "research",
         "task-breakdown",
         "skill-catalog",
         "permission-explain",
     }
-    assert registry.count() == len(BUILTIN_SKILLS) == 5
+    assert registry.count() == len(BUILTIN_SKILLS) == 7
 
 
 def test_builtin_entrypoints_are_importable():
@@ -351,13 +353,20 @@ def test_runner_executes_safe_skill_end_to_end():
 
 
 def test_runner_summarizer_skill():
+    # note-summarizer is a coroutine skill: the summarize tool
+    # is async (model gateway), so it must run through
+    # execute_async / run_async.
+    import asyncio
+
     executor, skills, loader, _, runner, _, _ = make_stack()
     executor.set("summarize", "short summary")
 
-    result = runner.execute(
-        "note-summarizer",
-        Task(title="s", description="d"),
-        {"text": "long text"},
+    result = asyncio.run(
+        runner.execute_async(
+            "note-summarizer",
+            Task(title="s", description="d"),
+            {"text": "long text"},
+        )
     )
 
     assert result.status == TaskStatus.COMPLETED
@@ -369,10 +378,14 @@ def test_runner_sensitive_tool_pauses_not_executes():
         risk_overrides={"summarize": RiskLevel.SENSITIVE}
     )
 
-    result = runner.execute(
-        "note-summarizer",
-        Task(title="s", description="d"),
-        {"text": "long text"},
+    import asyncio
+
+    result = asyncio.run(
+        runner.execute_async(
+            "note-summarizer",
+            Task(title="s", description="d"),
+            {"text": "long text"},
+        )
     )
 
     # Paused for approval: nothing executed, task not failed.

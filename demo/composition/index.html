@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+  :root {
+    --bg-0: #070b11;
+    --bg-1: #0c1119;
+    --bg-2: #121a26;
+    --line: #233246;
+    --text-0: #e8eef7;
+    --text-1: #aab7c9;
+    --text-2: #8494a9;
+    --accent: #4f8ff7;
+    --accent-soft: rgba(79,143,247,0.14);
+    --accent-line: rgba(79,143,247,0.45);
+    --ok: #3fd07f;
+    --ok-soft: rgba(63,208,127,0.10);
+    --err: #ff6b6b;
+    --err-soft: rgba(255,107,107,0.10);
+    --err-line: rgba(255,107,107,0.45);
+    --mono: "Cascadia Code","JetBrains Mono","Fira Code",Consolas,monospace;
+    --sans: "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:1920px; height:1080px; overflow:hidden; background:var(--bg-0); color:var(--text-0); font-family:var(--sans); }
+  #root { position:relative; width:1920px; height:1080px; }
+  .clip { position:absolute; inset:0; width:1920px; height:1080px; background:var(--bg-0); opacity:0; overflow:hidden; }
+  .mono { font-family:var(--mono); }
+  .eyebrow { font-family:var(--mono); font-size:22px; letter-spacing:0.42em; color:var(--text-2); text-transform:uppercase; }
+  .shot-frame { border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 40px 120px rgba(0,0,0,0.6); background:#0a0f16; }
+  .shot-frame img { display:block; width:100%; height:auto; }
+  .grid-bg { position:absolute; inset:0; background-image:linear-gradient(rgba(79,143,247,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(79,143,247,0.045) 1px, transparent 1px); background-size:64px 64px; }
+  .node { border:1px solid var(--line); background:var(--bg-2); border-radius:12px; padding:22px 40px; font-family:var(--mono); font-size:30px; color:var(--text-0); text-align:center; }
+  .node.acc { border-color:var(--accent-line); background:var(--accent-soft); }
+  .node.err { border-color:var(--err-line); background:var(--err-soft); }
+  .arrow { font-family:var(--mono); color:var(--text-2); font-size:30px; }
+  .chip { display:inline-block; border:1px solid var(--line); background:var(--bg-2); border-radius:999px; padding:10px 26px; font-family:var(--mono); font-size:24px; color:var(--text-1); }
+  .row { display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); border-radius:10px; padding:16px 28px; font-family:var(--mono); font-size:26px; background:var(--bg-1); }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="85" data-width="1920" data-height="1080">
+
+  <!-- S1 0-6: launch / real login -->
+  <div class="clip" id="s1" data-start="0" data-duration="6" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div style="position:absolute; left:120px; top:150px; width:760px;">
+      <div id="s1-eyebrow" class="eyebrow">Personal AI Operating System</div>
+      <div id="s1-title" style="font-size:150px; font-weight:700; letter-spacing:0.06em; margin-top:28px;">ENMA</div>
+      <div id="s1-rule" style="height:2px; background:var(--accent); margin-top:30px; width:0;"></div>
+      <div id="s1-sub" style="margin-top:34px; font-size:30px; color:var(--text-1); line-height:1.6;">
+        A desktop AI that plans tasks, runs tools<br/>and keeps working when a provider fails.
+      </div>
+      <div id="s1-chip" style="margin-top:44px;"><span class="chip">Windows desktop &middot; local backend &middot; audited execution</span></div>
+    </div>
+    <div id="s1-shot" class="shot-frame" style="position:absolute; right:100px; top:110px; width:900px; transform:rotate(0.4deg);">
+      <img src="assets/enma-login-real.png" />
+    </div>
+  </div>
+
+  <!-- S2 6-14: logged in / real mind UI -->
+  <div class="clip" id="s2" data-start="6" data-duration="8" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div id="s2-shot" class="shot-frame" style="position:absolute; left:170px; top:120px; width:1580px;">
+      <img src="assets/enma-mind-real.png" />
+    </div>
+    <div id="s2-badge" style="position:absolute; left:210px; bottom:60px; display:flex; gap:18px;">
+      <span class="chip">Authenticated session</span>
+      <span class="chip">Backend connected</span>
+      <span class="chip">Groq &mdash; openai/gpt-oss-120b</span>
+    </div>
+  </div>
+
+  <!-- S3 14-24: task -->
+  <div class="clip" id="s3" data-start="14" data-duration="10" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div style="position:absolute; left:0; right:0; top:200px; text-align:center;">
+      <div id="s3-eyebrow" class="eyebrow">A task comes in</div>
+      <div id="s3-card" style="margin:70px auto 0; width:1240px; border:1px solid var(--line); border-radius:14px; background:var(--bg-2); padding:56px 64px; text-align:left;">
+        <div style="font-family:var(--mono); font-size:22px; color:var(--text-2); letter-spacing:0.3em;">TASK</div>
+        <div id="s3-line" style="margin-top:22px; font-size:44px; line-height:1.5;">Research this topic and summarize the findings.</div>
+      </div>
+      <div id="s3-note" style="margin-top:44px; font-size:26px; color:var(--text-2);">
+        ENMA plans the work and sends generation to the model layer &mdash; the orchestrator decides who runs it.
+      </div>
+    </div>
+  </div>
+
+  <!-- S4 24-33: architecture -->
+  <div class="clip" id="s4" data-start="24" data-duration="9" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div style="position:absolute; left:0; right:0; top:170px; text-align:center;">
+      <div id="s4-eyebrow" class="eyebrow">Model layer</div>
+    </div>
+    <div id="s4-flow" style="position:absolute; left:0; right:0; top:330px; display:flex; flex-direction:column; align-items:center; gap:34px;">
+      <div class="node" style="width:560px;">ENMA</div>
+      <div class="arrow">&#9660;</div>
+      <div class="node" style="width:560px;">Orchestrator</div>
+      <div class="arrow">&#9660;</div>
+      <div id="s4-gemini" class="node acc" style="width:560px;">Gemini</div>
+    </div>
+    <div id="s4-note" style="position:absolute; left:0; right:0; bottom:120px; text-align:center; font-size:26px; color:var(--text-2);">
+      One gateway. Registered providers. Deterministic order.
+    </div>
+  </div>
+
+  <!-- S5 33-43: 429 -->
+  <div class="clip" id="s5" data-start="33" data-duration="10" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div style="position:absolute; left:0; right:0; top:330px; display:flex; justify-content:center;">
+      <div id="s5-box" class="node" style="width:560px;">Gemini</div>
+    </div>
+    <div style="position:absolute; left:0; right:0; top:500px; display:flex; justify-content:center;">
+      <div class="arrow">&#9660;</div>
+    </div>
+    <div style="position:absolute; left:0; right:0; top:590px; display:flex; justify-content:center;">
+      <div id="s5-err" style="border:1px solid var(--err-line); background:var(--err-soft); border-radius:12px; padding:30px 70px; font-family:var(--mono); font-size:52px; color:var(--err); opacity:0;">
+        HTTP 429 &mdash; Rate limited
+      </div>
+    </div>
+    <div id="s5-note" style="position:absolute; left:0; right:0; bottom:150px; text-align:center; font-size:28px; color:var(--text-1); opacity:0;">
+      Quota exhaustion happens. ENMA does not stop there.
+    </div>
+  </div>
+
+  <!-- S6 43-53: automatic fallback -->
+  <div class="clip" id="s6" data-start="43" data-duration="10" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div id="s6-eyebrow" class="eyebrow" style="position:absolute; left:0; right:0; top:150px; text-align:center;">Automatic provider fallback</div>
+    <div style="position:absolute; left:0; right:0; top:300px; display:flex; justify-content:center; gap:60px; align-items:center;">
+      <div id="s6-gem" class="node err" style="width:360px;">Gemini<br/><span style="font-size:24px; color:var(--err);">429</span></div>
+      <div id="s6-router" class="node acc" style="width:440px; font-size:34px;">ENMA ROUTER</div>
+      <div id="s6-groq" class="node" style="width:360px;">Groq</div>
+    </div>
+    <div style="position:absolute; left:0; right:0; top:560px; display:flex; justify-content:center;">
+      <div id="s6-line1" style="width:0; height:2px; background:var(--accent);"></div>
+    </div>
+    <div id="s6-note" style="position:absolute; left:0; right:0; bottom:170px; text-align:center; font-size:28px; color:var(--text-1); opacity:0;">
+      Transient failure classified &mdash; next provider in order.
+    </div>
+  </div>
+
+  <!-- S7 53-65: success + real UI -->
+  <div class="clip" id="s7" data-start="53" data-duration="12" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div style="position:absolute; left:170px; top:100px;">
+      <div id="s7-head" style="display:flex; align-items:center; gap:36px;">
+        <div id="s7-ok" style="border:1px solid rgba(63,208,127,0.45); background:var(--ok-soft); border-radius:12px; padding:18px 44px; font-family:var(--mono); font-size:38px; color:var(--ok); opacity:0;">
+          Groq &nbsp;&#10003;&nbsp; Success
+        </div>
+        <div id="s7-task" style="font-family:var(--mono); font-size:28px; color:var(--text-2); opacity:0;">Task &rarr; COMPLETED</div>
+      </div>
+      <div id="s7-shot" class="shot-frame" style="margin-top:46px; width:1580px;">
+        <img src="assets/enma-chat-real.png" />
+      </div>
+    </div>
+    <div id="s7-note" style="position:absolute; right:210px; top:118px; text-align:right; font-size:26px; color:var(--text-2); opacity:0;">
+      Task continues on the fallback provider.
+    </div>
+  </div>
+
+  <!-- S8 65-75: full tree + audit -->
+  <div class="clip" id="s8" data-start="65" data-duration="10" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div id="s8-head" class="eyebrow" style="position:absolute; left:150px; top:130px;">Every attempt is recorded</div>
+    <div id="s8-tree" style="position:absolute; left:150px; top:240px; display:flex; flex-direction:column; gap:22px; width:820px;">
+      <div class="row"><span>ENMA &rarr; Orchestrator</span><span style="color:var(--text-2);">model router</span></div>
+      <div class="row" style="border-color:var(--err-line);"><span>Gemini</span><span style="color:var(--err);">HTTPStatusError</span></div>
+      <div class="row" style="border-color:rgba(63,208,127,0.45);"><span>Groq</span><span style="color:var(--ok);">OK</span></div>
+      <div class="row"><span>Nemotron (NVIDIA)</span><span style="color:var(--text-2);">in order</span></div>
+      <div class="row"><span>Hugging Face</span><span style="color:var(--text-2);">optional &middot; unconfigured</span></div>
+    </div>
+    <div id="s8-audit" style="position:absolute; right:150px; top:240px; width:700px; border:1px solid var(--line); border-radius:14px; background:var(--bg-1); padding:34px 40px;">
+      <div style="font-family:var(--mono); font-size:20px; color:var(--text-2); letter-spacing:0.3em;">AUDIT TRAIL</div>
+      <div style="margin-top:20px; font-family:var(--mono); font-size:24px; line-height:2.0;">
+        <div><span style="color:var(--err);">failed</span> &nbsp;gemini&nbsp; HTTPStatusError</div>
+        <div><span style="color:var(--ok);">ok</span> &nbsp;&nbsp;&nbsp;&nbsp;groq&nbsp;&nbsp; &mdash;</div>
+        <div style="color:var(--text-2);">task &nbsp;COMPLETED</div>
+      </div>
+      <div style="margin-top:22px; font-size:22px; color:var(--text-2);">Provider attempts land in the audit log.</div>
+    </div>
+  </div>
+
+  <!-- S9 75-85: branding -->
+  <div class="clip" id="s9" data-start="75" data-duration="10" data-track-index="1">
+    <div class="grid-bg"></div>
+    <div style="position:absolute; left:0; right:0; top:330px; text-align:center;">
+      <div id="s9-title" style="font-size:170px; font-weight:700; letter-spacing:0.08em;">ENMA</div>
+      <div id="s9-rule" style="height:2px; background:var(--accent); width:0; margin:40px auto 0;"></div>
+      <div id="s9-lines" style="margin-top:56px; font-size:44px; line-height:1.8; color:var(--text-1);">
+        One assistant.<br/>
+        Multiple AI providers.<br/>
+        Automatic resilience.
+      </div>
+    </div>
+  </div>
+
+  <audio id="music" data-start="0" data-duration="78" data-track-index="20" data-volume="0.16" src="assets/music.mp3"></audio>
+  <audio id="k1" data-start="6.2"  data-duration="0.2"  data-track-index="30" data-volume="0.3"  src="assets/sfx/click_002.ogg"></audio>
+  <audio id="k2" data-start="14.2" data-duration="0.2"  data-track-index="30" data-volume="0.3"  src="assets/sfx/click_003.ogg"></audio>
+  <audio id="k3" data-start="24.2" data-duration="0.2"  data-track-index="30" data-volume="0.3"  src="assets/sfx/click_002.ogg"></audio>
+  <audio id="k4" data-start="36.5" data-duration="0.3"  data-track-index="31" data-volume="0.5"  src="assets/sfx/error_005.ogg"></audio>
+  <audio id="k5" data-start="45.2" data-duration="0.25" data-track-index="31" data-volume="0.45" src="assets/sfx/impactGeneric_light_001.ogg"></audio>
+  <audio id="k6" data-start="53.4" data-duration="0.5"  data-track-index="31" data-volume="0.55" src="assets/sfx/impactBell_heavy_000.ogg"></audio>
+  <audio id="k7" data-start="75.2" data-duration="0.3"  data-track-index="31" data-volume="0.5"  src="assets/sfx/bong_001.ogg"></audio>
+</div>
+
+<script>
+  const tl = gsap.timeline({ paused: true });
+  window.__timelines = window.__timelines || {};
+  window.__timelines["main"] = tl;
+
+  /* S1 0-6 launch */
+  tl.fromTo("#s1", {opacity:0},{opacity:1,duration:0.35}, 0);
+  tl.fromTo("#s1-eyebrow",{opacity:0,y:12},{opacity:1,y:0,duration:0.4,ease:"power2.out"}, 0.3);
+  tl.fromTo("#s1-title",{opacity:0,y:26},{opacity:1,y:0,duration:0.55,ease:"power3.out"}, 0.55);
+  tl.fromTo("#s1-rule",{width:0},{width:620,duration:0.7,ease:"power2.inOut"}, 1.0);
+  tl.fromTo("#s1-sub",{opacity:0,y:16},{opacity:1,y:0,duration:0.45,ease:"power2.out"}, 1.5);
+  tl.fromTo("#s1-chip",{opacity:0},{opacity:1,duration:0.4}, 1.9);
+  tl.fromTo("#s1-shot",{opacity:0,x:70},{opacity:1,x:0,duration:0.8,ease:"power3.out"}, 0.7);
+  tl.to("#s1-shot img",{scale:1.05,duration:4.6,ease:"none"}, 1.2);
+  tl.to("#s1",{opacity:0,duration:0.4}, 5.6);
+
+  /* S2 6-14 real mind UI */
+  tl.fromTo("#s2",{opacity:0},{opacity:1,duration:0.35}, 6);
+  tl.fromTo("#s2-shot",{opacity:0,y:34},{opacity:1,y:0,duration:0.7,ease:"power3.out"}, 6.15);
+  tl.to("#s2-shot img",{scale:1.06,duration:7.2,ease:"none"}, 6.8);
+  tl.fromTo("#s2-badge",{opacity:0,y:18},{opacity:1,y:0,duration:0.5,ease:"power2.out"}, 7.2);
+  tl.to("#s2",{opacity:0,duration:0.4}, 13.6);
+
+  /* S3 14-24 task */
+  tl.fromTo("#s3",{opacity:0},{opacity:1,duration:0.35}, 14);
+  tl.fromTo("#s3-eyebrow",{opacity:0,y:14},{opacity:1,y:0,duration:0.45,ease:"power2.out"}, 14.3);
+  tl.fromTo("#s3-card",{opacity:0,y:34},{opacity:1,y:0,duration:0.6,ease:"power3.out"}, 14.8);
+  tl.fromTo("#s3-line",{opacity:0},{opacity:1,duration:0.6}, 15.4);
+  tl.fromTo("#s3-note",{opacity:0},{opacity:1,duration:0.5}, 16.6);
+  tl.to("#s3",{opacity:0,duration:0.4}, 23.6);
+
+  /* S4 24-33 architecture */
+  tl.fromTo("#s4",{opacity:0},{opacity:1,duration:0.35}, 24);
+  tl.fromTo("#s4-eyebrow",{opacity:0,y:14},{opacity:1,y:0,duration:0.4,ease:"power2.out"}, 24.3);
+  tl.fromTo("#s4-flow > div:nth-child(1)",{opacity:0,y:26},{opacity:1,y:0,duration:0.45,ease:"power3.out"}, 24.8);
+  tl.fromTo("#s4-flow > div:nth-child(2)",{opacity:0},{opacity:1,duration:0.3}, 25.4);
+  tl.fromTo("#s4-flow > div:nth-child(3)",{opacity:0,y:26},{opacity:1,y:0,duration:0.45,ease:"power3.out"}, 25.8);
+  tl.fromTo("#s4-flow > div:nth-child(4)",{opacity:0},{opacity:1,duration:0.3}, 26.4);
+  tl.fromTo("#s4-flow > div:nth-child(5)",{opacity:0,y:26},{opacity:1,y:0,duration:0.45,ease:"power3.out"}, 26.8);
+  tl.fromTo("#s4-note",{opacity:0},{opacity:1,duration:0.5}, 27.6);
+  tl.to("#s4-gemini",{borderColor:"rgba(255,107,107,0.45)",backgroundColor:"rgba(255,107,107,0.10)",duration:0.5}, 32.2);
+  tl.to("#s4",{opacity:0,duration:0.4}, 32.6);
+
+  /* S5 33-43 429 */
+  tl.fromTo("#s5",{opacity:0},{opacity:1,duration:0.35}, 33);
+  tl.fromTo("#s5-box",{opacity:0,y:24},{opacity:1,y:0,duration:0.45,ease:"power3.out"}, 33.3);
+  tl.fromTo("#s5-box",{borderColor:"var(--accent-line)"},{borderColor:"var(--err-line)",backgroundColor:"var(--err-soft)",duration:0.5,immediateRender:false}, 36.4);
+  tl.fromTo("#s5-err",{opacity:0,scale:0.94},{opacity:1,scale:1,duration:0.45,ease:"power3.out"}, 36.7);
+  tl.fromTo("#s5-note",{opacity:0},{opacity:1,duration:0.5}, 38.4);
+  tl.to("#s5",{opacity:0,duration:0.4}, 42.6);
+
+  /* S6 43-53 fallback */
+  tl.fromTo("#s6",{opacity:0},{opacity:1,duration:0.35}, 43);
+  tl.fromTo("#s6-eyebrow",{opacity:0,y:14},{opacity:1,y:0,duration:0.45,ease:"power2.out"}, 43.3);
+  tl.fromTo("#s6-gem",{opacity:0,x:-40},{opacity:1,x:0,duration:0.5,ease:"power3.out"}, 43.8);
+  tl.fromTo("#s6-router",{opacity:0,scale:0.94},{opacity:1,scale:1,duration:0.5,ease:"power3.out"}, 44.6);
+  tl.fromTo("#s6-groq",{opacity:0,x:40},{opacity:1,x:0,duration:0.5,ease:"power3.out"}, 45.2);
+  tl.fromTo("#s6-line1",{width:0},{width:900,duration:0.8,ease:"power2.inOut"}, 45.9);
+  tl.fromTo("#s6-note",{opacity:0},{opacity:1,duration:0.5}, 47.4);
+  tl.to("#s6-groq",{borderColor:"rgba(63,208,127,0.45)",backgroundColor:"var(--ok-soft)",duration:0.5}, 48.4);
+  tl.to("#s6",{opacity:0,duration:0.4}, 52.6);
+
+  /* S7 53-65 success + real UI */
+  tl.fromTo("#s7",{opacity:0},{opacity:1,duration:0.35}, 53);
+  tl.fromTo("#s7-ok",{opacity:0,scale:0.94},{opacity:1,scale:1,duration:0.5,ease:"power3.out"}, 53.4);
+  tl.fromTo("#s7-task",{opacity:0},{opacity:1,duration:0.4}, 54.0);
+  tl.fromTo("#s7-shot",{opacity:0,y:40},{opacity:1,y:0,duration:0.7,ease:"power3.out"}, 54.2);
+  tl.to("#s7-shot img",{scale:1.05,duration:9.5,ease:"none"}, 55);
+  tl.fromTo("#s7-note",{opacity:0},{opacity:1,duration:0.5}, 55.2);
+  tl.to("#s7",{opacity:0,duration:0.4}, 64.6);
+
+  /* S8 65-75 audit + tree */
+  tl.fromTo("#s8",{opacity:0},{opacity:1,duration:0.35}, 65);
+  tl.fromTo("#s8-head",{opacity:0,y:14},{opacity:1,y:0,duration:0.4,ease:"power2.out"}, 65.3);
+  tl.fromTo("#s8-tree .row",{opacity:0,y:20},{opacity:1,y:0,duration:0.4,ease:"power2.out",stagger:0.22}, 65.7);
+  tl.fromTo("#s8-audit",{opacity:0,x:40},{opacity:1,x:0,duration:0.6,ease:"power3.out"}, 66.6);
+  tl.to("#s8",{opacity:0,duration:0.4}, 74.6);
+
+  /* S9 75-85 branding */
+  tl.fromTo("#s9",{opacity:0},{opacity:1,duration:0.4}, 75);
+  tl.fromTo("#s9-title",{opacity:0,y:26},{opacity:1,y:0,duration:0.6,ease:"power3.out"}, 75.3);
+  tl.fromTo("#s9-rule",{width:0},{width:560,duration:0.7,ease:"power2.inOut"}, 75.9);
+  tl.fromTo("#s9-lines",{opacity:0,y:20},{opacity:1,y:0,duration:0.7,ease:"power2.out"}, 76.6);
+</script>
+</body>
+</html>

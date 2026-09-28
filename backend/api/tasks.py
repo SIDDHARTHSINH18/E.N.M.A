@@ -269,9 +269,35 @@ async def list_tasks(http_request: Request):
     }
 
 
+def _step_view(step) -> dict:
+    """JSON-safe observability view of one workflow step.
+
+    Progress reporting only: the step's params are included so
+    a user can see what would run / ran, results and errors as
+    recorded by the engine. No tool executes here.
+    """
+
+    return {
+        "id": step.id,
+        "order": step.order,
+        "title": step.title,
+        "tool": step.tool_name,
+        "dependencies": list(step.dependencies),
+        "status": step.status.value,
+        "params": step.params,
+        "result": step.result,
+        "error": step.error,
+        "decision": (
+            step.decision.value
+            if step.decision is not None
+            else None
+        ),
+    }
+
+
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str, http_request: Request):
-    """Return one stored task by ID."""
+    """Return one stored task by ID, including step progress."""
 
     try:
         task = task_service.get(task_id, owner=_owner(http_request))
@@ -291,6 +317,17 @@ async def get_task(task_id: str, http_request: Request):
         "priority": task.priority,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
+        "started_at": (
+            task.started_at.isoformat()
+            if task.started_at
+            else None
+        ),
+        "completed_at": (
+            task.completed_at.isoformat()
+            if task.completed_at
+            else None
+        ),
+        "retry_count": task.retry_count,
         "result": task.result,
         "error": task.error,
         "reflection": (
@@ -298,6 +335,14 @@ async def get_task(task_id: str, http_request: Request):
             if task.reflection is not None
             else None
         ),
+        # Step progress, straight from the runner's recorded
+        # workflow (empty after a restart — step records are
+        # in-memory by design; the audit log stays the durable
+        # step record).
+        "steps": [
+            _step_view(step)
+            for step in task_runner.planned_steps(task.id)
+        ],
     }
 
 

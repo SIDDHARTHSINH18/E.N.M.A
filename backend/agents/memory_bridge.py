@@ -134,6 +134,119 @@ class MemoryBridge:
 
         return report
 
+    def record_research(
+        self,
+        task: Task,
+        research_output: dict,
+    ) -> MemoryWrite:
+        """
+        Store one bounded research memory (M5.9) through the
+        same bridge, only for explicitly completed research
+        with real sources.
+
+        Rules:
+        - never called for raw page dumps: the memory carries
+          the topic, a short synthesis excerpt, and source
+          DOMAINS (provenance), not page text
+        - provenance is preserved in the record metadata so a
+          future reader can trace which external sources
+          produced this memory
+        - never raises
+        """
+
+        sources = research_output.get("sources") or []
+
+        domains = sorted(
+            {
+                str(s.get("domain", "")).strip()
+                for s in sources
+                if isinstance(s, dict)
+                and s.get("domain")
+            }
+        )
+
+        retrieved = [
+            s
+            for s in sources
+            if isinstance(s, dict)
+            and s.get("status") == "retrieved"
+        ]
+
+        if not retrieved:
+            return MemoryWrite(
+                reason="no retrieved sources; nothing to remember"
+            )
+
+        topic = str(research_output.get("topic", "")).strip()
+
+        summary = str(
+            research_output.get("summary", "")
+        ).strip()
+
+        parts = [f"Research completed on '{topic}'."]
+
+        if summary:
+            parts.append(
+                "Synthesis: " + summary[:400]
+            )
+
+        if domains:
+            parts.append("Sources: " + ", ".join(domains[:10]))
+
+        content = redact_text(" ".join(parts))
+
+        if len(content) > MAX_MEMORY_CHARS:
+            content = (
+                content[:MAX_MEMORY_CHARS].rstrip() + "..."
+            )
+
+        try:
+            record = self._memory.add_memory(
+                content=content,
+                memory_type="research",
+                importance=0.6,
+                project=self._project,
+                source=MEMORY_SOURCE,
+                confidence=0.8,
+                tags=["research", "external-sources"],
+                metadata={
+                    "task_id": task.id,
+                    "task_title": task.title,
+                    "origin": "research-workflow",
+                    # Provenance: which external sources this
+                    # memory derives from (URLs, not content).
+                    "source_urls": [
+                        str(s.get("url", ""))
+                        for s in retrieved
+                        if s.get("url")
+                    ][:10],
+                },
+            )
+        except Exception as exc:
+            return MemoryWrite(
+                attempted=True,
+                content=content,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+        memory_id = (
+            record.get("id") if isinstance(record, dict) else None
+        )
+
+        if not memory_id:
+            return MemoryWrite(
+                attempted=True,
+                content=content,
+                error="MemoryService returned no memory id.",
+            )
+
+        return MemoryWrite(
+            attempted=True,
+            written=True,
+            memory_id=memory_id,
+            content=record.get("content", content),
+        )
+
     # --------------------------------------------------------
     # DECISION
     # --------------------------------------------------------

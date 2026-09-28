@@ -432,10 +432,9 @@ def test_skills_endpoint_reports_unavailable_skills_honestly():
 
     by_name = {skill["name"]: skill for skill in skills}
 
-    # memory-recall needs a memory_search tool that does not
-    # exist yet: it is listed (so the catalog is complete) and
-    # flagged unavailable (so the pipeline will not run it).
-    assert by_name["memory-recall"]["available"] is False
-    assert by_name["memory-recall"]["missing_tools"] == ["memory_search"]
+    # memory_search is a real registered tool now (M4), so
+    # memory-recall reports itself honestly as runnable.
+    assert by_name["memory-recall"]["available"] is True
+    assert by_name["memory-recall"]["missing_tools"] == []
 
     assert by_name["task-breakdown"]["available"] is True

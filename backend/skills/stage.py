@@ -46,7 +46,7 @@ DEFAULT_CANDIDATE_LIMIT = 5
 # requirement from ("goal", "text", "query"). The requirement is
 # offered under each of them — a skill reads the one it wants and
 # ignores the rest — so no skill name is hardcoded here.
-INPUT_PARAM_KEYS = ("goal", "text", "query")
+INPUT_PARAM_KEYS = ("goal", "text", "query", "prompt")
 
 
 @dataclass(frozen=True)
@@ -209,6 +209,31 @@ class SkillStage:
             )
 
         return self._runner.execute(
+            selection.skill,
+            task,
+            self.build_params(task.description, params),
+        )
+
+    async def execute_async(
+        self,
+        selection: SkillSelection,
+        task: Task,
+        params: Optional[dict] = None,
+    ) -> SkillResult:
+        """
+        Async twin of execute(): same gate, same shared runner,
+        but skills implemented as coroutines (async-tool skills
+        such as model-backed summarization) are awaited instead
+        of refused.
+        """
+
+        if not selection.matched:
+            raise ValueError(
+                "Cannot execute a skill selection that matched "
+                f"nothing ({selection.reason})."
+            )
+
+        return await self._runner.execute_async(
             selection.skill,
             task,
             self.build_params(task.description, params),

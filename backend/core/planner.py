@@ -68,11 +68,17 @@ class PlannedStep:
     One proposed action. Inert data: the Planner never
     executes steps — tool names are advisory strings the
     executor (+ PermissionPolicy) will evaluate later.
+
+    ``depends_on`` lists indices (into the steps list) of
+    steps that must complete before this one may run. The
+    planner may only reference STRICTLY EARLIER steps;
+    the executor enforces that ordering anyway, fail-closed.
     """
 
     description: str
     tool: Optional[str] = None
     params: dict = field(default_factory=dict)
+    depends_on: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -112,6 +118,7 @@ class PlanningResult:
                     "description": step.description,
                     "tool": step.tool,
                     "params": step.params,
+                    "depends_on": list(step.depends_on),
                 }
                 for step in self.steps
             ],
@@ -240,7 +247,9 @@ class Planner:
             '  "task_title": string or null,\n'
             '  "task_description": string or null,\n'
             '  "steps": [{"description": string, '
-            '"tool": string or null, "params": {}}],\n'
+            '"tool": string or null, "params": {}, '
+            '"depends_on": [earlier step indices this step '
+            "needs completed first]}],\n"
             '  "assumptions": [string],\n'
             '  "clarifying_questions": [string]\n'
             "}\n\n"
@@ -559,11 +568,26 @@ class Planner:
             params = item.get("params")
             params = dict(params) if isinstance(params, dict) else {}
 
+            # Dependencies may only reference strictly earlier
+            # steps. Anything else (self, forward, malformed)
+            # is dropped rather than trusted: the engine will
+            # still fail closed if a surviving reference ever
+            # cannot be satisfied.
+            index = len(steps)
+            depends_on = {
+                dep
+                for dep in item.get("depends_on", [])
+                if isinstance(dep, int)
+                and not isinstance(dep, bool)
+                and 0 <= dep < index
+            }
+
             steps.append(
                 PlannedStep(
                     description=description,
                     tool=tool or None,
                     params=params,
+                    depends_on=sorted(depends_on),
                 )
             )
 

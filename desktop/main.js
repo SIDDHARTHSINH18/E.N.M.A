@@ -380,6 +380,10 @@ function backendRuntimeEnv() {
       userDataDir("data"),
       "audit.jsonl"
     ),
+    GHOST_TASKS_PATH: path.join(
+      userDataDir("data"),
+      "tasks.jsonl"
+    ),
     ENMA_WORKSPACE_ROOT: userDataDir("workspace"),
     // HuggingFace model cache (all-MiniLM-L6-v2, downloaded on
     // first semantic retrieval) must land in user-writable space,

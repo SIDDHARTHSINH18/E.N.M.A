@@ -37,6 +37,20 @@ os.environ.setdefault(
     ),
 )
 
+# M4: task persistence must not touch the real
+# backend/data/tasks.jsonl during tests, same convention
+# as GHOST_MEMORY_PATH / GHOST_AUDIT_PATH. A UNIQUE file per
+# session: the app-level task store loads this file once at
+# import, so leftover records from a previous run would leak
+# into list/count assertions.
+os.environ.setdefault(
+    "GHOST_TASKS_PATH",
+    str(
+        Path(tempfile.mkdtemp(prefix="ghost-test-tasks-"))
+        / "tasks.jsonl"
+    ),
+)
+
 os.environ.setdefault(
     "NVIDIA_API_KEY",
     "test-key-not-real",

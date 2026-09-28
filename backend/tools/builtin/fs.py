@@ -235,3 +235,85 @@ def fs_file_exists(params: dict) -> bool:
         raise ToolExecutionError(
             f"Cannot inspect path: {error.strerror}."
         )
+
+
+MAX_WRITE_BYTES = 1024 * 1024  # 1 MB
+
+
+def _write_validated_path(params: dict) -> tuple[str, Path]:
+    """Write-specific path validation on top of the shared resolver.
+
+    Unlike the read tools, writing refuses absolute paths outside the
+    canonical execution root outright: a write may never land in an
+    arbitrary host location, only inside the sanctioned workspace.
+    """
+
+    raw_path = params.get("path") if isinstance(params, dict) else None
+
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ToolExecutionError(
+            "fs_write_file requires a 'path' parameter."
+        )
+
+    root = canonical_execution_root()
+
+    path, path_obj = resolve_tool_path(raw_path.strip())
+
+    if path_obj != root and root not in path_obj.parents:
+        raise ToolExecutionError(
+            "fs_write_file refuses paths outside the "
+            f"execution root: '{path}'."
+        )
+
+    if path_obj.is_symlink():
+        raise ToolExecutionError(
+            f"Refusing to write through symbolic link: '{path}'."
+        )
+
+    return path, path_obj
+
+
+def fs_write_file(params: dict) -> dict:
+    """
+    Write text into one file inside the workspace.
+
+    Safety constraints, enforced HERE in code (params are
+    untrusted model output):
+    - the path must resolve INSIDE the canonical execution
+      root; absolute paths outside it are refused outright
+      (the read tools tolerate sanctioned absolute paths —
+      a write tool must not)
+    - content is UTF-8 text, size-bounded
+    - parent directories are created as needed
+    - no append, no shell, no globbing
+
+    Returns {"path": <display path>, "bytes": <written size>} so
+    callers can verify the write actually happened.
+    """
+
+    content = params.get("content") if isinstance(params, dict) else None
+
+    if not isinstance(content, str):
+        raise ToolExecutionError(
+            "fs_write_file requires a 'content' string parameter."
+        )
+
+    encoded = content.encode("utf-8")
+
+    if len(encoded) > MAX_WRITE_BYTES:
+        raise ToolExecutionError(
+            f"Content too large ({len(encoded)} bytes; limit "
+            f"{MAX_WRITE_BYTES} bytes)."
+        )
+
+    path, path_obj = _write_validated_path(params)
+
+    try:
+        path_obj.parent.mkdir(parents=True, exist_ok=True)
+        path_obj.write_bytes(encoded)
+    except OSError as error:
+        raise ToolExecutionError(
+            f"Cannot write '{path}': {error.strerror}."
+        )
+
+    return {"path": path, "bytes": len(encoded)}

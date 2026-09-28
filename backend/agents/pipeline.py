@@ -431,7 +431,7 @@ class AgentPipeline:
             return
 
         if outcome.selection is not None and outcome.selection.matched:
-            outcome.skill_result = self._run_skill(
+            outcome.skill_result = await self._run_skill(
                 task,
                 outcome.selection,
             )
@@ -542,7 +542,7 @@ class AgentPipeline:
             ),
         }
 
-    def _run_skill(
+    async def _run_skill(
         self,
         task: Task,
         selection: SkillSelection,
@@ -550,6 +550,10 @@ class AgentPipeline:
         """
         Run the matched skill through SkillRunner, which executes
         its own steps via the same Agent -> PermissionPolicy path.
+
+        Async: a coroutine skill (async-tool steps, e.g. the
+        model-backed summarizer) is awaited; sync skills are
+        unchanged.
 
         A skill raising is converted into a failed result: an
         exception here would otherwise surface as a server error
@@ -559,7 +563,10 @@ class AgentPipeline:
         name = selection.skill or "unknown-skill"
 
         try:
-            result = self._skills.execute(selection, task)
+            result = await self._skills.execute_async(
+                selection,
+                task,
+            )
         except Exception as error:
             result = SkillResult(
                 skill_name=name,
@@ -589,6 +596,29 @@ class AgentPipeline:
             },
         )
 
+        # M5.9/M5.10: research outcomes get a dedicated provenance
+        # audit row (domains + counts, never page text) and, when
+        # sources were really retrieved, one bounded memory record
+        # through the existing bridge.
+        if (
+            result.skill_name == "research"
+            and result.status == TaskStatus.COMPLETED
+            and isinstance(result.output, dict)
+        ):
+            self._audit(
+                task.id,
+                AuditStage.RESEARCH,
+                event="sources_tracked",
+                status=result.status.value,
+                data=result.output.get("source_summary", {}),
+            )
+
+            if self._memory is not None:
+                self._memory.record_research(
+                    task,
+                    result.output,
+                )
+
         return result
 
     @staticmethod
@@ -599,9 +629,19 @@ class AgentPipeline:
         """
 
         if result.status == TaskStatus.COMPLETED:
+            # The skill's structured output is the authoritative
+            # task result (e.g. research carries sources +
+            # limitations, document-creation carries the written
+            # file). The engine's {tool: output} map is the
+            # fallback when a skill reports no output.
             if task.status != TaskStatus.COMPLETED:
                 task.status = TaskStatus.COMPLETED
-                task.result = result.output
+
+            task.result = (
+                result.output
+                if result.output is not None
+                else task.result
+            )
             task.error = None
             return
 
@@ -647,7 +687,10 @@ class AgentPipeline:
     # ========================================================
 
     def _audit_steps(self, task_id: str, steps: List[TaskStep]) -> None:
-        """One TOOL row per step, in plan order."""
+        """One TOOL row per step, in plan order. A step the
+        permission policy DENIED also gets an explicit
+        PERMISSION row, so denials are first-class audit
+        events rather than only a detail inside the tool row."""
 
         for step in steps:
             self._audit(
@@ -664,6 +707,22 @@ class AgentPipeline:
                     "error": step.error,
                 },
             )
+
+            if (
+                step.decision is not None
+                and step.decision.value == "DENY"
+            ):
+                self._audit(
+                    task_id,
+                    AuditStage.PERMISSION,
+                    event="denied",
+                    status=step.status.value,
+                    data={
+                        "step_id": step.id,
+                        "order": step.order,
+                        "tool": step.tool_name,
+                    },
+                )
 
     def _audit_pause(
         self,
@@ -729,6 +788,7 @@ def task_steps_from_spec(spec: ExecutionSpec) -> List[TaskStep]:
             params=dict(step.params),
             order=step.order,
             title=_clip(step.description, MAX_STEP_TITLE_CHARS),
+            dependencies=list(step.depends_on),
         )
         for step in spec.steps
     ]

@@ -102,6 +102,9 @@ class FakeSkillStage:
             raise self._raises
         return self._result
 
+    async def execute_async(self, selection, task, params=None):
+        return self.execute(selection, task, params)
+
 
 class BrokenFileStore:
     """An audit store that cannot write: every append raises."""
@@ -227,11 +230,14 @@ def test_safe_plan_runs_and_records_every_stage(tmp_path):
     assert outcome.spec.approval_required is False
 
     # The runner's envelope passed through unchanged.
+    # auto_retries reports bounded automatic recovery attempts
+    # (0 here — the run succeeded on its first pass).
     assert set(outcome.execution) == {
         "task_id",
         "state",
         "task_status",
         "approval_id",
+        "auto_retries",
         "reflection",
     }
 

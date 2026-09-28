@@ -35,12 +35,19 @@ class NoteSummarizerSkill(Skill):
         ),
     )
 
-    def run(
+    async def run(
         self,
         task: Task,
         agent: Agent,
         params: dict,
     ) -> SkillResult:
+        """
+        Async coroutine skill: the summarize tool reaches the
+        model through the async gateway, so its engine pass
+        must go through run_async (Agent.execute_async). The
+        permission path is identical — each step re-enters
+        Agent -> PermissionPolicy.
+        """
 
         text = str(params.get("text", "")).strip()
 
@@ -60,7 +67,7 @@ class NoteSummarizerSkill(Skill):
             title="Summarize text",
         )
 
-        outcome = engine.run(task, [step])
+        outcome = await engine.run_async(task, [step])
 
         return SkillResult(
             skill_name=self.metadata.name,

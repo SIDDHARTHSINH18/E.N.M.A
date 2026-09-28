@@ -156,6 +156,7 @@ class AuditStage(str, Enum):
     APPROVAL = "approval"
     ERROR = "error"
     LIFECYCLE = "lifecycle"
+    RESEARCH = "research"
 
 
 class AuditLog:

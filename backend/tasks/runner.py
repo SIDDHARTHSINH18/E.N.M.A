@@ -35,7 +35,8 @@ from backend.automation.engine import (
     AutomationResult,
     WorkflowState,
 )
-from backend.core.task import TaskStatus
+from backend.core.task import TaskStatus, MAX_TASK_RETRIES
+from backend.permissions.policy import PermissionDecision
 from backend.reflection.engine import ReflectionEngine
 
 
@@ -46,6 +47,8 @@ class TaskRunner:
         automation_engine: AutomationEngine,
         approvals: ApprovalService,
         reflection_engine: Optional[ReflectionEngine] = None,
+        retryable_tools: Optional[frozenset] = None,
+        max_auto_retries: int = MAX_TASK_RETRIES,
     ):
         self._tasks = task_service
         self._engine = automation_engine
@@ -53,6 +56,14 @@ class TaskRunner:
         self._reflection = reflection_engine
         # task_id -> planned steps, in plan order.
         self._workflows: Dict[str, list] = {}
+        # Bounded automatic recovery (M4): a FAILED run whose
+        # steps are ALL explicitly listed here (i.e. SAFE tools
+        # only, no approval surface) is re-executed up to
+        # max_auto_retries times. None disables auto-retry
+        # entirely — fail-safe default for any runner that is
+        # not explicitly wired for it.
+        self._retryable_tools = retryable_tools
+        self._max_auto_retries = max_auto_retries
 
     def start(self, task_id: str, steps: list) -> dict:
         """
@@ -298,9 +309,10 @@ class TaskRunner:
         Agent -> PermissionPolicy -> ToolRegistry path.
         """
 
-        return self._outcome(
+        return self._execute_with_recovery(
             task,
-            self._engine.run(task, steps),
+            steps,
+            lambda: self._engine.run(task, steps),
         )
 
     async def _run_async(self, task, steps: list) -> dict:
@@ -309,18 +321,99 @@ class TaskRunner:
         Agent -> PermissionPolicy -> ToolRegistry path.
         """
 
-        return self._outcome(
+        return await self._execute_with_recovery_async(
             task,
-            await self._engine.run_async(task, steps),
+            steps,
+            lambda: self._engine.run_async(task, steps),
         )
 
-    def _outcome(self, task, result: AutomationResult) -> dict:
+    # --------------------------------------------------------
+    # Bounded automatic recovery (M4)
+    # --------------------------------------------------------
+
+    def _can_auto_retry(
+        self,
+        task,
+        result: AutomationResult,
+    ) -> bool:
+        """
+        Only genuinely safe failures retry automatically:
+        - the workflow FAILED (not paused, cancelled, or empty)
+        - no step was DENIED by the permission policy (a policy
+          decision will not change by re-running it; denials
+          finalize through the explicit denial path instead)
+        - every step's tool is in the explicitly allowed
+          retryable set (SAFE tools only — nothing that writes,
+          approves, or can be dangerous)
+        - the shared retry cap (MAX_TASK_RETRIES, tracked on
+          the task) is not exhausted
+        """
+
+        if result.state is not WorkflowState.FAILED:
+            return False
+
+        if result.approval_denied:
+            return False
+
+        if task.retry_count >= self._max_auto_retries:
+            return False
+
+        if not self._retryable_tools:
+            return False
+
+        for step in result.steps:
+            if getattr(step, "decision", None) is (
+                PermissionDecision.DENY
+            ):
+                return False
+
+            if step.tool_name not in self._retryable_tools:
+                return False
+
+        return True
+
+    def _execute_with_recovery(self, task, steps, run_once):
+        result = run_once()
+        attempts = 0
+
+        while self._can_auto_retry(task, result):
+            attempts += 1
+            # TaskService.retry validates the FAILED->PENDING
+            # transition and enforces the shared retry cap.
+            self._tasks.retry(task.id)
+            result = run_once()
+
+        return self._outcome(task, result, auto_retries=attempts)
+
+    async def _execute_with_recovery_async(self, task, steps, run_once):
+        result = await run_once()
+        attempts = 0
+
+        while self._can_auto_retry(task, result):
+            attempts += 1
+            self._tasks.retry(task.id)
+            result = await run_once()
+
+        return self._outcome(task, result, auto_retries=attempts)
+
+    def _outcome(
+        self,
+        task,
+        result: AutomationResult,
+        auto_retries: int = 0,
+    ) -> dict:
         """
         Post-execution bookkeeping, shared by both passes:
         reflection, approval-record creation on PAUSE, and the
         runner's result envelope. Identical for sync and async,
         so neither path can drift.
         """
+
+        if auto_retries:
+            # Record the recovery honestly, on the task and in
+            # the envelope: a retried run must never read as a
+            # first-attempt success.
+            task.metadata["auto_retries"] = auto_retries
 
         # Reflection is strictly post-execution and read-only. It
         # receives the AutomationResult produced by the real Agent /
@@ -353,6 +446,7 @@ class TaskRunner:
             "state": result.state,
             "task_status": task.status,
             "approval_id": approval_id,
+            "auto_retries": auto_retries,
             "reflection": (
                 reflection.to_dict()
                 if reflection is not None

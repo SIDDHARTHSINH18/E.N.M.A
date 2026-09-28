@@ -16,6 +16,8 @@ injects them; direct skill.run() callers may pass them
 explicitly.
 """
 
+from inspect import iscoroutine
+
 from backend.automation.engine import AutomationEngine
 from backend.core.task import Task
 from backend.skills.loader import SkillLoader
@@ -72,3 +74,44 @@ class SkillRunner:
         run_params.setdefault(AUTOMATION_ENGINE_KEY, self._engine)
 
         return skill.run(task, self._agent, run_params)
+
+    async def execute_async(
+        self,
+        skill_name: str,
+        task: Task,
+        params: dict | None = None,
+    ) -> SkillResult:
+        """
+        Async twin of execute() for skills whose steps need
+        async tools (e.g. the model gateway).
+
+        The same gate, param injection and skill.run() call
+        apply; the only difference is that a skill implemented
+        as a coroutine function is awaited here, while a
+        synchronous skill works unchanged. Neither path can
+        bypass permissions: every engine step re-enters
+        Agent -> PermissionPolicy regardless.
+        """
+
+        # Clear, early failure for unknown skills.
+        self._skills.get_metadata(skill_name)
+
+        skill = self._loader.load(skill_name)
+
+        run_params = dict(params or {})
+        run_params.setdefault(SKILL_REGISTRY_KEY, self._skills)
+
+        if self._permissions is not None:
+            run_params.setdefault(
+                PERMISSION_POLICY_KEY,
+                self._permissions,
+            )
+
+        run_params.setdefault(AUTOMATION_ENGINE_KEY, self._engine)
+
+        result = skill.run(task, self._agent, run_params)
+
+        if iscoroutine(result):
+            result = await result
+
+        return result
