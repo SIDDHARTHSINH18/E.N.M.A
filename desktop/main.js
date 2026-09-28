@@ -14,6 +14,25 @@ let staticPort = null;
 // proxy auto-detection (WPAD/PAC) must never delay its first
 // request: on misconfigured networks that resolution alone can
 // stall Chromium for minutes before any window content loads.
+// Single instance: a second ENMA.exe cannot own the strict
+// frontend port (5177) and would fall back to a CORS-broken
+// file:// UI. Focus the existing window instead.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (win) {
+      if (win.isMinimized()) {
+        win.restore();
+      }
+      win.focus();
+    }
+  });
+}
+
 app.commandLine.appendSwitch("no-proxy-server");
 
 // Deterministic ENMA development ports. The frontend static
@@ -277,6 +296,43 @@ function probeBackend() {
   });
 }
 
+// ------------------------------------------------------------
+// User-writable runtime directories (packaged vs dev).
+//
+// The backend's storage engines default to paths derived from
+// the backend source location, which inside an installed
+// application is a protected Program Files directory. Their
+// documented env overrides are pointed at the Electron userData
+// directory here, so an installed ENMA never writes into its
+// installation tree: application resources stay in resources/,
+// user data lives in %APPDATA%/enma-desktop.
+// ------------------------------------------------------------
+function userDataDir(name) {
+  const dir = path.join(app.getPath("userData"), name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function backendRuntimeEnv() {
+  // Development keeps the repository's own backend/data storage
+  // conventions untouched; only the packaged runtime — whose
+  // installation tree is not writable — is redirected.
+  if (!app.isPackaged) {
+    return {};
+  }
+  return {
+    GHOST_MEMORY_PATH: path.join(
+      userDataDir("data"),
+      "memory.json"
+    ),
+    GHOST_AUDIT_PATH: path.join(
+      userDataDir("data"),
+      "audit.jsonl"
+    ),
+    ENMA_WORKSPACE_ROOT: userDataDir("workspace"),
+  };
+}
+
 async function startBackend() {
   // 1. Runtime: never trust an unvalidated PATH lookup.
   const runtime = await resolvePython();
@@ -296,7 +352,8 @@ async function startBackend() {
   //    private data directory (never the install tree).
   const configPath = ensureBackendConfig();
 
-  // 3. Spawn with the resolved runtime and config path.
+  // 3. Spawn with the resolved runtime, config path, and the
+  //    user-writable storage/workspace directories.
   backendProcess = spawn(
     runtime[0],
     [
@@ -315,6 +372,7 @@ async function startBackend() {
       env: {
         ...process.env,
         ENMA_CONFIG_PATH: configPath,
+        ...backendRuntimeEnv(),
       },
     }
   );
@@ -361,10 +419,27 @@ async function startBackend() {
 }
 
 function stopBackend() {
-  if (backendProcess) {
-    backendProcess.kill();
-    backendProcess = null;
+  if (!backendProcess) {
+    return;
   }
+
+  // On Windows the backend may be launched through the "py -3"
+  // launcher, so the real uvicorn runs as a child of the direct
+  // child process. A plain kill() would orphan that grandchild
+  // and leave it holding port 8000 after ENMA exits. Kill the
+  // whole process tree instead; other platforms keep kill().
+  // Mark intent first: the exit handler must not report this
+  // deliberate shutdown as a backend startup failure.
+  backendState = "stopping";
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(backendProcess.pid), "/T", "/F"], {
+      windowsHide: true,
+    });
+  } else {
+    backendProcess.kill();
+  }
+
+  backendProcess = null;
 }
 
 function createWindow() {
