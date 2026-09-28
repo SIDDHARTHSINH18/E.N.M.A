@@ -19,9 +19,100 @@ This is intentionally designed so Nemotron can remain the current model
 while another model/provider can be plugged in later.
 """
 
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
+import httpx
+
+import os
 import time
+
+from backend.providers.base import ProviderUnavailable
+
+
+# ============================================================
+# PROVIDER FAILURE CLASSIFICATION (model router)
+# ============================================================
+
+class ProviderFailureCategory(str, Enum):
+    """Explicit, structured categories for provider failures.
+
+    Only TRANSIENT categories are eligible for automatic
+    fallback. Structural problems (invalid request, unknown
+    failure) must not be blindly re-sent to other providers.
+    """
+
+    RATE_LIMITED = "RATE_LIMITED"
+    AUTH_FAILED = "AUTH_FAILED"
+    TIMEOUT = "TIMEOUT"
+    NETWORK_ERROR = "NETWORK_ERROR"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    INVALID_REQUEST = "INVALID_REQUEST"
+    UNKNOWN = "UNKNOWN"
+
+
+# Failures eligible for automatic provider fallback: quota
+# exhaustion, timeouts, temporary network/availability loss.
+# Everything else (auth failure, invalid request, unknown)
+# fails immediately — an invalid request must not be sent to
+# four providers.
+FALLBACK_ELIGIBLE = frozenset(
+    {
+        ProviderFailureCategory.RATE_LIMITED,
+        ProviderFailureCategory.TIMEOUT,
+        ProviderFailureCategory.NETWORK_ERROR,
+        ProviderFailureCategory.PROVIDER_UNAVAILABLE,
+        ProviderFailureCategory.MODEL_UNAVAILABLE,
+    }
+)
+
+
+def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
+    """
+    Map a provider exception onto a structured failure
+    category. Based on exception type and, for HTTP status
+    errors, the response status code. Never inspects or
+    returns message text (which can carry URLs).
+    """
+
+    if isinstance(error, ProviderUnavailable):
+        return getattr(
+            error,
+            "category",
+            ProviderFailureCategory.PROVIDER_UNAVAILABLE,
+        )
+
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+
+        if status == 429:
+            return ProviderFailureCategory.RATE_LIMITED
+        if status in (401, 403):
+            return ProviderFailureCategory.AUTH_FAILED
+        if status == 404:
+            return ProviderFailureCategory.MODEL_UNAVAILABLE
+        if status == 400 or status == 422:
+            return ProviderFailureCategory.INVALID_REQUEST
+        if status >= 500:
+            return ProviderFailureCategory.PROVIDER_UNAVAILABLE
+        return ProviderFailureCategory.UNKNOWN
+
+    if isinstance(error, httpx.TimeoutException):
+        return ProviderFailureCategory.TIMEOUT
+
+    if isinstance(error, httpx.TransportError):
+        return ProviderFailureCategory.NETWORK_ERROR
+
+    # Unconfigured providers raise RuntimeError (gemini) or
+    # ValueError (openai-compatible) with "not configured"
+    # semantics; the type alone is the signal — message text
+    # is never matched, so nothing credential-shaped is read.
+    text = getattr(error, "args", [""])[0] if error.args else ""
+    if isinstance(text, str) and "not configured" in text.lower():
+        return ProviderFailureCategory.PROVIDER_UNAVAILABLE
+
+    return ProviderFailureCategory.UNKNOWN
 
 
 class Orchestrator:
@@ -35,6 +126,28 @@ class Orchestrator:
     ):
         self.providers: Dict[str, Any] = {}
         self.default_provider = default_provider
+
+        # Model-router fallback order (model router, M-router).
+        # Explicitly requested providers are always tried
+        # first; the remaining registered providers follow this
+        # order. Only providers that are actually registered
+        # are attempted. Overridable without code changes:
+        # ENMA_MODEL_FALLBACK_ORDER="gemini,groq,nemotron".
+        self.fallback_order: List[str] = [
+            name.strip()
+            for name in os.getenv(
+                "ENMA_MODEL_FALLBACK_ORDER",
+                "gemini,groq,nemotron,huggingface",
+            ).split(",")
+            if name.strip()
+        ]
+
+        # Internal routing metadata from the most recent
+        # generate() call: selected provider/model, attempts
+        # [{provider, category, error_type}], final status.
+        # Never contains credentials. The returned value of
+        # generate() stays a plain string for compatibility.
+        self.last_route: Dict[str, Any] = {}
 
         # Optional callable for MODEL-stage audit events, wired
         # by the composition root (core.agent_services). Signature:
@@ -316,9 +429,46 @@ CURRENT USER REQUEST:
 
         ``task_id`` is optional correlation metadata for the
         MODEL audit event; it is never forwarded to providers.
+
+        Model routing (M-router): when the first provider fails
+        with a FALLBACK-ELIGIBLE failure (rate limit, timeout,
+        network loss, provider/model unavailable — including an
+        unconfigured optional provider), the next registered
+        provider in ``fallback_order`` is attempted. Structural
+        failures (invalid request, auth failure, unknown) stop
+        immediately. The returned value remains a plain string;
+        routing metadata lands in ``self.last_route``.
         """
 
-        provider = self.get_provider(provider_name)
+        # --------------------------------------------------------
+        # Routing candidate order
+        # --------------------------------------------------------
+        #
+        # An explicitly requested provider is always tried
+        # first (caller intent is respected). The remaining
+        # registered providers follow the configured fallback
+        # order. Registered providers not in the order come
+        # last, deterministically by name.
+
+        candidates: List[str] = []
+
+        def add_candidate(name: str):
+            if name and name in self.providers and name not in candidates:
+                candidates.append(name)
+
+        if provider_name:
+            add_candidate(provider_name)
+
+        for name in self.fallback_order:
+            add_candidate(name)
+
+        for name in sorted(self.providers.keys()):
+            add_candidate(name)
+
+        if not candidates:
+            raise ValueError(
+                "GHOST has no registered model providers."
+            )
 
         system_prompt = self.build_system_prompt()
 
@@ -346,75 +496,135 @@ CURRENT USER REQUEST:
             {"role": "user", "content": context},
         ]
 
-        call_start = time.perf_counter()
+        attempts: List[Dict[str, Any]] = []
 
-        try:
-            result = await provider.generate(
-                messages=messages,
-                model=model,
-                **kwargs,
-            )
-        except Exception as error:
+        for index, current_name in enumerate(candidates):
+            provider = self.providers[current_name]
+
+            effective_model = model
+            if effective_model is None:
+                if hasattr(provider, "_default_model"):
+                    try:
+                        effective_model = provider._default_model()
+                    except Exception:
+                        effective_model = None
+                elif getattr(provider, "default_model", None):
+                    effective_model = provider.default_model
+
+            call_start = time.perf_counter()
+
+            try:
+                result = await provider.generate(
+                    messages=messages,
+                    model=effective_model,
+                    **kwargs,
+                )
+            except Exception as error:
+                category = classify_provider_failure(error)
+
+                attempts.append(
+                    {
+                        "provider": current_name,
+                        "category": category.value,
+                        "error_type": type(error).__name__,
+                    }
+                )
+
+                self._audit_model_call(
+                    task_id,
+                    current_name,
+                    effective_model,
+                    ok=False,
+                    duration_ms=(
+                        (time.perf_counter() - call_start) * 1000
+                    ),
+                    error_type=type(error).__name__,
+                )
+
+                # Fallback only on eligible transient failures,
+                # and only while candidates remain.
+                if (
+                    category in FALLBACK_ELIGIBLE
+                    and index + 1 < len(candidates)
+                ):
+                    continue
+
+                self.last_route = {
+                    "selected_provider": None,
+                    "selected_model": effective_model,
+                    "attempts": attempts,
+                    "status": "failed",
+                }
+                raise
+
             self._audit_model_call(
                 task_id,
-                provider_name,
-                model,
-                ok=False,
-                duration_ms=(
-                    (time.perf_counter() - call_start) * 1000
-                ),
-                error_type=type(error).__name__,
-            )
-            raise
-
-        self._audit_model_call(
-            task_id,
-            provider_name,
-            model,
-            ok=True,
-            duration_ms=(time.perf_counter() - call_start) * 1000,
-            error_type=None,
-        )
-
-        # --------------------------------------------------------
-        # Normalize provider result
-        # --------------------------------------------------------
-
-        if result is None:
-            raise RuntimeError(
-                "GHOST received an empty response from the model."
+                current_name,
+                effective_model,
+                ok=True,
+                duration_ms=(time.perf_counter() - call_start) * 1000,
+                error_type=None,
             )
 
-        if isinstance(result, str):
-            return result
+            # --------------------------------------------------------
+            # Normalize provider result
+            # --------------------------------------------------------
 
-        # Common response formats
-        if isinstance(result, dict):
+            if result is None:
+                raise RuntimeError(
+                    "GHOST received an empty response from the model."
+                )
 
-            if "response" in result:
-                return str(result["response"])
+            text: Optional[str] = None
 
-            if "content" in result:
-                return str(result["content"])
+            if isinstance(result, str):
+                text = result
+            elif isinstance(result, dict):
 
-            if "text" in result:
-                return str(result["text"])
+                if "response" in result:
+                    text = str(result["response"])
 
-            if "message" in result:
-                message_data = result["message"]
+                elif "content" in result:
+                    text = str(result["content"])
 
-                if isinstance(message_data, dict):
-                    return str(
-                        message_data.get(
-                            "content",
-                            message_data,
+                elif "text" in result:
+                    text = str(result["text"])
+
+                elif "message" in result:
+                    message_data = result["message"]
+
+                    if isinstance(message_data, dict):
+                        text = str(
+                            message_data.get(
+                                "content",
+                                message_data,
+                            )
                         )
-                    )
 
-                return str(message_data)
+                    else:
+                        text = str(message_data)
+            else:
+                text = str(result)
 
-        # Final fallback
-        return str(result)
+            if text is None:
+                self.last_route = {
+                    "selected_provider": None,
+                    "selected_model": effective_model,
+                    "attempts": attempts,
+                    "status": "failed",
+                }
+                raise RuntimeError(
+                    "GHOST received an empty response from the model."
+                )
+
+            self.last_route = {
+                "selected_provider": current_name,
+                "selected_model": effective_model,
+                "attempts": attempts,
+                "status": "ok",
+            }
+
+            return text
 
     # ============================================================
     # SIMPLE CHAT INTERFACE

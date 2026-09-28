@@ -10,10 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider(AIProvider):
-    def __init__(self, name, base_url, api_key):
+    def __init__(self, name, base_url, api_key, default_model=None):
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        # Providers whose APIs require an explicit model on
+        # every request (Groq, HF router) must have one even
+        # when the caller passes model=None — otherwise the
+        # request fails as INVALID_REQUEST and the model
+        # router correctly refuses to fall back.
+        self.default_model = default_model
 
     async def generate(self, messages, model=None, **kwargs):
         if not self.api_key:
@@ -27,6 +33,8 @@ class OpenAICompatibleProvider(AIProvider):
 
         if model:
             payload["model"] = model
+        elif self.default_model:
+            payload["model"] = self.default_model
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -107,6 +115,8 @@ class OpenAICompatibleProvider(AIProvider):
 
         if model:
             payload["model"] = model
+        elif self.default_model:
+            payload["model"] = self.default_model
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

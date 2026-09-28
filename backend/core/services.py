@@ -22,6 +22,7 @@ from backend.providers.openai_compatible import (
     OpenAICompatibleProvider,
 )
 from backend.providers.gemini import GeminiProvider
+from backend.providers.huggingface import HuggingFaceProvider
 
 
 # The project .env is the intended source of truth for provider
@@ -139,6 +140,7 @@ orchestrator.register_provider(
         api_key=os.getenv(
             "NVIDIA_API_KEY",
         ),
+        default_model=nvidia_model,
     ),
 )
 
@@ -176,12 +178,29 @@ orchestrator.register_provider(
         name="groq",
         base_url=groq_base_url,
         api_key=groq_api_key,
+        default_model=groq_model,
     ),
 )
 
 orchestrator.register_provider(
     "gemini",
     GeminiProvider(),
+)
+
+
+# ============================================================
+# HUGGING FACE PROVIDER (OPTIONAL, M-router)
+# ============================================================
+#
+# Optional adapter only: with no HF_API_KEY/HUGGINGFACE_API_KEY
+# configured, the provider raises an honest UNCONFIGURED
+# diagnostic before any network call and the model router
+# classifies it PROVIDER_UNAVAILABLE and skips it. Gemini,
+# Groq and NVIDIA remain the primary providers.
+
+orchestrator.register_provider(
+    "huggingface",
+    HuggingFaceProvider(),
 )
 
 
@@ -232,6 +251,23 @@ def provider_status(provider_name: str | None = None) -> dict:
             "api_key_present": bool(os.getenv("GROQ_API_KEY")),
             "base_url": groq_base_url,
             "model": groq_model,
+        }
+
+    if default_provider == "huggingface":
+        return {
+            "provider": "huggingface",
+            "api_key_present": bool(
+                os.getenv("HF_API_KEY")
+                or os.getenv("HUGGINGFACE_API_KEY")
+            ),
+            "base_url": os.getenv(
+                "HF_BASE_URL",
+                "https://router.huggingface.co/v1",
+            ),
+            "model": os.getenv(
+                "HF_MODEL",
+                "meta-llama/Llama-3.1-8B-Instruct",
+            ),
         }
 
     if default_provider == "gemini":
