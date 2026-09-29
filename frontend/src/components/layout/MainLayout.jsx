@@ -155,6 +155,48 @@ export default function MainLayout({
 
   const isChatWorkspace = activeTab === "chat";
 
+  // In-app update control: checks the desktop shell's HTTPS
+  // manifest lookup (/enma-update-check). If a newer trusted
+  // release exists, the download URL opens in the user's
+  // default browser and the normal signed installer takes over.
+  // ENMA never self-replaces; failures are reported honestly.
+  const [updateState, setUpdateState] = useState({
+    status: "idle",
+    info: null,
+  });
+
+  const handleUpdateCheck = async () => {
+    setUpdateState({ status: "checking", info: null });
+    try {
+      const response = await fetch("/enma-update-check");
+      const info = await response.json();
+      if (info.available) {
+        setUpdateState({ status: "available", info });
+        window.open(info.url, "_blank", "noopener");
+      } else if (info.error) {
+        setUpdateState({ status: "error", info });
+      } else {
+        setUpdateState({ status: "up-to-date", info });
+      }
+    } catch {
+      setUpdateState({
+        status: "error",
+        info: { error: "update check failed" },
+      });
+    }
+  };
+
+  const updateLabel =
+    updateState.status === "checking"
+      ? "Checking..."
+      : updateState.status === "available"
+        ? "Update available"
+        : updateState.status === "up-to-date"
+          ? "Up to date"
+          : updateState.status === "error"
+            ? "Update check failed"
+            : "Update";
+
   return (
     <main className="ghost-app main-layout-theme">
       {/* Header */}
@@ -170,6 +212,19 @@ export default function MainLayout({
           </div>
           <div className="top-bar-right">
             <span className="header-model">{modelName}</span>
+            <button
+              className="lock-button update-button"
+              type="button"
+              onClick={handleUpdateCheck}
+              disabled={updateState.status === "checking"}
+              title={
+                updateState.info && updateState.info.error
+                  ? `Update check: ${updateState.info.error}`
+                  : "Check for an ENMA update"
+              }
+            >
+              {updateLabel}
+            </button>
             <button
               className="lock-button"
               type="button"

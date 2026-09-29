@@ -1,4 +1,5 @@
-﻿import logging
+﻿import asyncio
+import logging
 import re
 
 from fastapi import APIRouter, HTTPException, Request
@@ -6,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.audit.log import redact_text
+from backend.tools.builtin.web_search import web_search, WebSearchError
 from backend.core.orchestrator import Orchestrator
 from backend.core.security import (
     get_rate_limits,
@@ -850,6 +852,125 @@ def save_conversation_memory(
 # PROMPT ASSEMBLY
 # ============================================================
 
+# ============================================================
+# CURRENT / RECENT INFORMATION ROUTING (truthfulness)
+#
+# Requests asking for latest/current/recent information must be
+# answered from REAL retrieval evidence, never from model
+# knowledge dressed up as news. If live retrieval is
+# unavailable, the honest answer is "I could not verify".
+# ============================================================
+
+CURRENT_EVENTS_PATTERN = re.compile(
+    r"\b("
+    r"latest|newest|breaking|recent(ly)?|current(ly)?|today|"
+    r"this\s+(week|month|year|morning|evening)|yesterday|"
+    r"as\s+of\s+\d{4}|up\s+to\s+date|"
+    r"(latest|recent|breaking)\s+(news|updates?|developments?)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Questions that are time-anchored but not about events
+# (e.g. "current temperature", "what time is it") still require
+# live data; the same rule applies: no live data -> say so.
+LIVE_DATA_PATTERN = re.compile(
+    r"\b(weather|temperature|forecast|stock\s+price|exchange\s+rate|"
+    r"time\s+in|what\s+time)\b",
+    re.IGNORECASE,
+)
+
+
+def detect_current_events_request(text: str) -> bool:
+    """True when the request needs fresh retrieval evidence."""
+
+    if not text:
+        return False
+
+    return bool(
+        CURRENT_EVENTS_PATTERN.search(text)
+        or LIVE_DATA_PATTERN.search(text)
+    )
+
+
+def build_current_events_context(
+    message: str,
+    search_result: dict,
+) -> str:
+    """
+    Compose the user turn for a current-events request whose
+    web search SUCCEEDED. Evidence is provider-returned search
+    leads (title/url/domain/snippet) wrapped as untrusted
+    content; the model may only ground claims in it and must
+    cite provenance.
+    """
+
+    results = search_result.get("results") or []
+
+    lines = []
+    for index, item in enumerate(results, start=1):
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        domain = str(item.get("domain") or "").strip()
+        snippet = str(item.get("snippet") or "").strip()
+
+        lines.append(
+            f"[{index}] {title or '(untitled)'}\n"
+            f"    URL: {url}\n"
+            f"    Domain: {domain or 'unknown'}\n"
+            f"    Snippet: {snippet[:600]}"
+        )
+
+    evidence = "\n\n".join(lines) if lines else "(no results)"
+
+    return (
+        "The user is asking about CURRENT or RECENT information.\n\n"
+        "HARD RULES:\n"
+        "- Ground every factual claim ONLY in the search results "
+        "below. They are real leads returned by a live web search "
+        "(title, URL, domain and provider snippet per source).\n"
+        "- Cite each claim inline as a markdown link: "
+        "[Source title](URL).\n"
+        "- Never present your own background knowledge as current "
+        "news. If the results do not cover something, say so "
+        "explicitly.\n"
+        "- If the sources disagree, report the disagreement.\n"
+        "- Do not invent sources, URLs, dates or quotes.\n"
+        "- End with a 'SOURCES:' list of markdown links you "
+        "actually used.\n\n"
+        f"SEARCH QUERY USED: {search_result.get('query', message)}\n"
+        f"SEARCH PROVIDER: {search_result.get('provider', 'unknown')}\n"
+        "NOTE: these are search leads with provider snippets; "
+        "pages were not fetched in full.\n\n"
+        f"<untrusted_content label=\"web_search_results\">\n"
+        f"{evidence}\n"
+        f"</untrusted_content>\n\n"
+        f"CURRENT USER REQUEST:\n{message}"
+    )
+
+
+def build_current_events_unavailable(
+    message: str,
+    reason: str,
+) -> str:
+    """User turn for a current-events request whose retrieval
+    FAILED: the model must answer honestly that it could not
+    verify, not fabricate."""
+
+    return (
+        "The user is asking about CURRENT or RECENT information, "
+        "but live web retrieval is NOT available right now "
+        f"({reason}).\n\n"
+        "HARD RULES:\n"
+        "- Respond ONLY that you could not verify current "
+        "information because live retrieval is unavailable.\n"
+        "- Do NOT answer from your training knowledge, do NOT "
+        "produce any news, dates, numbers or events.\n"
+        "- Suggest trying again later.\n\n"
+        f"CURRENT USER REQUEST:\n{message}"
+    )
+
+
 def build_request_messages(
     user_content: str,
     history: list[HistoryMessage],
@@ -869,6 +990,21 @@ def build_request_messages(
             "role": "system",
             "content": (
                 orchestrator.build_system_prompt()
+                + "\n\n"
+                "TOOL EXECUTION HONESTY:\n"
+                "- In this chat you have NOT executed any tools. "
+                "Never claim that a file was created, read, "
+                "written or verified, and never produce "
+                "simulated tool output such as 'Result "
+                "(simulated)'.\n"
+                "- If the user asks to perform an action on "
+                "files or systems, explain that ENMA performs "
+                "actions through its Task system (which asks "
+                "for approval where needed) and that nothing "
+                "has been executed in this chat.\n"
+                "- Claims about current or recent events require "
+                "retrieval evidence; without it, say you cannot "
+                "verify.\n"
             ),
         },
     ]
@@ -1019,12 +1155,58 @@ async def chat(
 
     # IMPORTANT: document_id only tells us that a document is selected.
     # It does NOT mean every user message should use that document.
+    current_events = detect_current_events_request(request.message)
+
     use_document = (
         bool(request.document_id)
         and should_use_document(request.message)
     )
 
-    if use_document:
+    if current_events and not use_document:
+        # ====================================================
+        # CURRENT / RECENT INFORMATION: retrieval REQUIRED
+        # ====================================================
+
+        try:
+            search_result = await asyncio.to_thread(
+                web_search,
+                {
+                    'query': request.message.strip()[:380],
+                    'max_results': 6,
+                },
+            )
+        except WebSearchError as error:
+            search_result = None
+            retrieval_reason = str(error)
+        except Exception as error:
+            search_result = None
+            retrieval_reason = f'{type(error).__name__}'
+
+        if search_result and search_result.get('result_count'):
+            logger.info(
+                'CURRENT EVENTS MODE — sources=%d provider=%s',
+                search_result.get('result_count', 0),
+                search_result.get('provider', 'unknown'),
+            )
+            user_content = build_current_events_context(
+                request.message,
+                search_result,
+            )
+        else:
+            reason = (
+                retrieval_reason
+                if not search_result
+                else 'the web search returned no results'
+            )
+            logger.warning(
+                'CURRENT EVENTS MODE — retrieval unavailable: %s',
+                reason,
+            )
+            user_content = build_current_events_unavailable(
+                request.message,
+                reason,
+            )
+    elif use_document:
 
         document = documents.get(
             request.document_id,

@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, shell } = require("electron");
 const path = require("path");
 const http = require("http");
 const net = require("net");
@@ -11,6 +11,7 @@ const {
   planBackendTermination,
   nextStateOnExit,
 } = require("./backendProcess");
+const { checkForUpdate } = require("./updates");
 
 let backendProcess = null;
 let staticServer = null;
@@ -122,6 +123,24 @@ function startStaticServer(distRoot) {
             configPath,
             setupPending
           }));
+          return;
+        }
+
+        // Update check (P1): the shell performs the HTTPS
+        // manifest lookup (renderer cannot reach arbitrary
+        // hosts through CSP) and returns an honest decision.
+        // The renderer opens the trusted URL in the default
+        // browser; installation runs through the normal signed
+        // NSIS installer. ENMA never self-replaces.
+        if (urlPath === "/enma-update-check") {
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8"
+          });
+          checkForUpdate({
+            currentVersion: app.getVersion(),
+          }).then((info) => {
+            res.end(JSON.stringify(info));
+          });
           return;
         }
 
@@ -474,6 +493,28 @@ function createWindow() {
     shown = true;
     win.show();
   };
+
+  // External links (chat answers, research sources) open in the
+  // user's DEFAULT browser — never navigate the app window.
+  // Only http/https is allowed; every other scheme is refused.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    } else {
+      console.warn(`ENMA refused to open unsafe URL scheme: ${url.split(":")[0]}:`);
+    }
+    return { action: "deny" };
+  });
+
+  // In-window navigation away from the local UI is also refused.
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith(`http://127.0.0.1:${staticPort}/`)) {
+      event.preventDefault();
+      if (/^https?:\/\//i.test(url)) {
+        shell.openExternal(url);
+      }
+    }
+  });
 
   win.once("ready-to-show", show);
 

@@ -16,49 +16,10 @@ import { readJSON, saveJSON } from "./utils/helpers";
 import { buildVisualGraph } from "./utils/helpers";
 import { resolveMemoryNode } from "./utils/helpers";
 import { TASK_SIGNALS, CHAT_PROVIDER } from "./utils/constants";
+import { renderInline, renderTextBlock } from "./utils/markdown";
 import { ZONES } from "./utils/constants";
 import CodeBlock from "./components/chat/CodeBlock";
 import TaskCard from "./components/chat/TaskCard";
-
-// Inline markdown for prose lines: `code` spans (visually
-// distinct, subtly highlighted) and **bold**. Code spans are
-// matched first so bold markers inside them are untouched.
-const INLINE_PATTERN = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)/g;
-
-function renderInline(text) {
-  const nodes = [];
-
-  let lastIndex = 0;
-  let match;
-  let key = 0;
-
-  INLINE_PATTERN.lastIndex = 0;
-
-  while ((match = INLINE_PATTERN.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-
-    if (match[1] !== undefined) {
-      nodes.push(
-        <code className="ghost-inline-code" key={`code-${key}`}>
-          {match[1].slice(1, -1)}
-        </code>
-      );
-    } else {
-      nodes.push(<strong key={`bold-${key}`}>{match[2].slice(2, -2)}</strong>);
-    }
-
-    key += 1;
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-
-  return nodes;
-}
 
 function App() {
   // State variables from original App.jsx
@@ -1328,44 +1289,7 @@ function App() {
             const lines = block.split("\n");
             return (
               <div key={blockIndex} className="ghost-text-block">
-                {lines.map((line, lineIndex) => {
-                  const value = line.trim();
-
-                  if (!value) {
-                    return <div key={lineIndex} className="ghost-spacer" />;
-                  }
-
-                  if (value.startsWith("### ")) {
-                    return <h4 key={lineIndex}>{value.slice(4)}</h4>;
-                  }
-
-                  if (value.startsWith("## ")) {
-                    return <h3 key={lineIndex}>{value.slice(3)}</h3>;
-                  }
-
-                  if (value.startsWith("# ")) {
-                    return <h2 key={lineIndex}>{value.slice(2)}</h2>;
-                  }
-
-                  if (/^[-*•]\s+/.test(value)) {
-                    return (
-                      <div key={lineIndex} className="ghost-bullet">
-                        <span>◆</span>
-                        <span>{renderInline(value.replace(/^[-*•]\s+/, ""))}</span>
-                      </div>
-                    );
-                  }
-
-                  if (/^\d+[.)]\s+/.test(value)) {
-                    return <div key={lineIndex} className="ghost-numbered">{value}</div>;
-                  }
-
-                  if (value.startsWith("> ")) {
-                    return <div key={lineIndex} className="ghost-quote">{value.slice(2)}</div>;
-                  }
-
-                  return <p key={lineIndex}>{renderInline(value)}</p>;
-                })}
+                {renderTextBlock(block, String(blockIndex))}
               </div>
             );
           })}

@@ -859,3 +859,13 @@
     font-size: 0.75rem;
   }
 }
+/* In-app update control (P1): subtle, native to the header. */
+.update-button {
+  margin-right: 8px;
+
+  opacity: 0.85;
+}
+
+.update-button:disabled {
+  opacity: 0.5;
+}

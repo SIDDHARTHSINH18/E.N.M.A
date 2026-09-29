@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
-    "test": "node config.test.js"
+    "test": "node config.test.js && node updates.test.js"
   },
   "build": {
     "appId": "com.enma.desktop",
@@ -20,6 +20,7 @@
       "config.js",
       "probe.js",
       "backendProcess.js",
+      "updates.js",
       "package.json"
     ],
     "extraResources": [

@@ -88,6 +88,14 @@ export const GHOST_STATES = {
  * Matches the logic in the original App.jsx
  */
 export const TASK_SIGNALS = [
+  // Task-creation phrasing: the user must never get a chat-mode
+  // "simulated" answer for these (truthfulness fix).
+  "create a task",
+  "write a file",
+  "write a note",
+  "create a note",
+  "make a file",
+  "save a file",
   "check whether",
   "check if",
   "find the file",
