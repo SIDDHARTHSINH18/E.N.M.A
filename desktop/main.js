@@ -5,6 +5,12 @@ const net = require("net");
 const fs = require("fs");
 const { spawn, execFile } = require("child_process");
 const crypto = require("crypto");
+const desktopConfig = require("./config");
+const { probeBackend: probeBackendPort } = require("./probe");
+const {
+  planBackendTermination,
+  nextStateOnExit,
+} = require("./backendProcess");
 
 let backendProcess = null;
 let staticServer = null;
@@ -272,83 +278,24 @@ async function resolvePython() {
 // that file (including adding provider keys) — it is never
 // shipped, never logged, and never sent to the renderer.
 function ensureBackendConfig() {
-  const configPath = path.join(
-    app.getPath("userData"),
-    "config.env"
-  );
-
-  if (!fs.existsSync(configPath)) {
-    const passphrase = crypto.randomBytes(24)
-      .toString("base64url");
-
-    fs.writeFileSync(
-      configPath,
-      [
-        "# ENMA backend configuration (created automatically",
-        "# on first run). Keep this file private.",
-        "#",
-        "# Login passphrase for the ENMA app:",
-        `GHOST_AUTH_PASSWORD=${passphrase}`,
-        "#",
-        "# First-run marker: on next launch the app asks you to",
-        "# create your own passphrase. This bootstrap value is",
-        "# then replaced by YOUR chosen passphrase.",
-        "ENMA_SETUP_PENDING=1",
-        "",
-        "# The app talks to the Groq provider; startup validation",
-        "# checks this provider's key:",
-        "ENMA_DEFAULT_PROVIDER=groq",
-        "#",
-        "# Provider key for the provider above (required for chat;",
-        "# startup refuses to run without it):",
-        "# GROQ_API_KEY=gsk_...",
-        "",
-        "# Other provider keys are optional; without them those",
-        "# providers report themselves unreachable:",
-        "GEMINI_API_KEY=",
-        "",
-      ].join("\n"),
-      { encoding: "utf-8" }
-    );
-
-    console.log(
-      `ENMA first-run configuration created at ${configPath}.`
-    );
-  }
-
-  return configPath;
+  // Delegates to desktop/config.js: first-run template creation
+  // plus the idempotent upgrade path for pre-existing configs
+  // (adds ENMA_DEFAULT_PROVIDER only when missing and
+  // compatible; never touches existing credentials).
+  return desktopConfig.ensureBackendConfig({
+    configPath: path.join(app.getPath("userData"), "config.env"),
+    fs,
+    crypto,
+  });
 }
 
 function probeBackend() {
-  // Resolves "healthy" | "foreign" | "free" for 127.0.0.1:8000.
-  return new Promise((resolve) => {
-    const socket = net.connect(BACKEND_PORT, BACKEND_HOST);
-    socket.setTimeout(1500);
-
-    const finish = (answer) => {
-      socket.destroy();
-      resolve(answer);
-    };
-
-    socket.on("connect", () => {
-      http
-        .get(
-          `http://${BACKEND_HOST}:${BACKEND_PORT}/health`,
-          (res) => {
-            res.resume();
-            // Any HTTP response means an ENMA backend already
-            // owns the port (/health is public and unauthenticated
-            // by design).
-            finish("healthy");
-          }
-        )
-        .on("error", () => finish("foreign"));
-
-      socket.setTimeout(1500, () => finish("foreign"));
-    });
-
-    socket.on("error", () => finish("free"));
-    socket.on("timeout", () => finish("free"));
+  // Delegates to desktop/probe.js (extracted verbatim for
+  // testability): "healthy" | "foreign" | "free" for the
+  // strict backend port.
+  return probeBackendPort({
+    host: BACKEND_HOST,
+    port: BACKEND_PORT,
   });
 }
 
@@ -465,18 +412,17 @@ async function startBackend() {
   });
 
   backendProcess.on("exit", (code, signal) => {
-    if (backendState === "running") {
-      backendState = "failed";
-      backendReason =
-        `backend process exited during startup ` +
-        `(code=${code}, signal=${signal}). Check the packaged ` +
-        "Python runtime and the backend configuration file in " +
-        "the ENMA user-data directory.";
-      console.error(
-        "ENMA BACKEND EXITED. " +
-        `Port: ${BACKEND_HOST}:${BACKEND_PORT}. ` +
-        `Reason: ${backendReason}`
-      );
+    const outcome = nextStateOnExit(backendState, code, signal);
+    if (outcome.state !== backendState) {
+      backendState = outcome.state;
+      backendReason = outcome.reason;
+      if (backendState === "failed") {
+        console.error(
+          "ENMA BACKEND EXITED. " +
+          `Port: ${BACKEND_HOST}:${BACKEND_PORT}. ` +
+          `Reason: ${backendReason}`
+        );
+      }
     }
     backendProcess = null;
   });
@@ -495,10 +441,12 @@ function stopBackend() {
   // Mark intent first: the exit handler must not report this
   // deliberate shutdown as a backend startup failure.
   backendState = "stopping";
-  if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(backendProcess.pid), "/T", "/F"], {
-      windowsHide: true,
-    });
+  const plan = planBackendTermination(
+    backendProcess.pid,
+    process.platform
+  );
+  if (plan && plan.tool === "taskkill") {
+    spawn(plan.tool, plan.args, { windowsHide: plan.windowsHide });
   } else {
     backendProcess.kill();
   }

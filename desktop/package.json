@@ -6,7 +6,8 @@
   "author": "ENMA",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "test": "node config.test.js"
   },
   "build": {
     "appId": "com.enma.desktop",
@@ -16,6 +17,9 @@
     },
     "files": [
       "main.js",
+      "config.js",
+      "probe.js",
+      "backendProcess.js",
       "package.json"
     ],
     "extraResources": [

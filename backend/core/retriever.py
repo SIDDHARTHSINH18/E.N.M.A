@@ -457,6 +457,7 @@ class DocumentRetriever:
 
         except ImportError as error:
 
+            cls = type(self)
             if cls._ml_state is None:
                 cls._ml_state = ML_STATE_UNAVAILABLE
                 cls._ml_unavailable_reason = (
