@@ -138,7 +138,7 @@ def test_fs_write_file_writes_inside_workspace(tmp_path, monkeypatch):
     written = tmp_path / "reports" / "out.md"
 
     assert written.read_text(encoding="utf-8") == "# hello"
-    assert result == {"path": str(written), "bytes": 7}
+    assert result == {"path": str(written), "bytes": 7, "verified": True}
 
 
 def test_fs_write_file_refuses_absolute_path_outside_workspace(

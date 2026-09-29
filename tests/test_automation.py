@@ -252,3 +252,229 @@ def test_final_task_status_reflects_workflow():
     paused_task = Task(title="C", description="d")
     engine.run(paused_task, [TaskStep(tool_name="send_email", order=0)])
     assert paused_task.status == TaskStatus.RUNNING
+
+
+# ============================================================
+# Same-tool result identity (P1 hardening)
+# ============================================================
+
+def test_same_tool_steps_keep_distinct_results():
+    """Two steps using the SAME tool must both survive in the
+    final task result: the first keeps the plain tool name,
+    the second gets a '<tool>#1' key."""
+
+    executor = MockToolExecutor()
+    executor.set("read_note", "first read")
+    engine, _ = make_engine(executor)
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(tool_name="read_note", order=1),
+    ]
+    task = Task(title="Same tool twice", description="d")
+    result = engine.run(task, steps)
+
+    assert result.state == WorkflowState.COMPLETED
+    assert task.result == {
+        "read_note": "first read",
+        "read_note#1": "first read",
+    }
+    # The in-memory step records stay the source of truth for
+    # per-step results either way.
+    assert result.steps[0].result == "first read"
+    assert result.steps[1].result == "first read"
+    assert executor.calls == [
+        ("read_note", {}),
+        ("read_note", {}),
+    ]
+
+
+def test_single_tool_result_keeps_plain_name():
+    """Backwards compatibility: one step per tool is keyed by
+    the bare tool name exactly as before."""
+
+    executor = MockToolExecutor()
+    executor.set("read_note", "note contents")
+    executor.set("summarize", "short summary")
+    engine, _ = make_engine(executor)
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(tool_name="summarize", order=1),
+    ]
+    task = Task(title="Distinct tools", description="d")
+    result = engine.run(task, steps)
+
+    assert task.result == {
+        "read_note": "note contents",
+        "summarize": "short summary",
+    }
+
+
+# ============================================================
+# P0.2 — execution-correctness stress (multi/same-tool, deps,
+# failed-dependency propagation, partial results, cancellation)
+# ============================================================
+
+def test_mixed_repeated_tools_all_independently_addressable():
+    """Step1 same_tool, Step2 same_tool, Step3 other, Step4
+    same_tool: every result survives under its own key."""
+
+    executor = MockToolExecutor()
+    engine, _ = make_engine(executor)
+
+    # Same tool, different results per call (stateful mock).
+    responses = iter(["r0", "r1", "r2", "r3"])
+
+    def cycling(name, params):
+        return next(responses)
+
+    engine, agent = make_engine(executor)
+    agent._execute_tool = cycling
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(tool_name="read_note", order=1),
+        TaskStep(tool_name="summarize", order=2),
+        TaskStep(tool_name="read_note", order=3),
+    ]
+    task = Task(title="Mixed repeated tools", description="d")
+    result = engine.run(task, steps)
+
+    assert result.state == WorkflowState.COMPLETED
+    assert task.result == {
+        "read_note": "r0",
+        "read_note#1": "r1",
+        "summarize": "r2",
+        "read_note#2": "r3",
+    }
+
+
+def test_dependency_reference_flows_between_steps():
+    """A {"from_step": N, "field": ...} param reference resolves
+    from the dependency's actual result."""
+
+    executor = MockToolExecutor()
+    executor.set("read_note", {"text": "hello world"})
+    executor.set("summarize", "summary of: hello world")
+    engine, _ = make_engine(executor)
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(
+            tool_name="summarize",
+            params={"text": {"from_step": 0, "field": "text"}},
+            dependencies=[0],
+            order=1,
+        ),
+    ]
+    task = Task(title="Dependent steps", description="d")
+    result = engine.run(task, steps)
+
+    assert result.state == WorkflowState.COMPLETED
+    # The summarize step received the upstream field value.
+    assert executor.calls[1] == ("summarize", {"text": "hello world"})
+
+
+def test_failed_dependency_blocks_dependent_step():
+    """When a dependency fails, the dependent step must not run
+    and the workflow must fail — no partial fake success."""
+
+    executor = MockToolExecutor()
+    executor.set("read_note", RuntimeError("disk exploded"))
+    executor.set("summarize", "never reached")
+    engine, _ = make_engine(executor)
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(
+            tool_name="summarize",
+            dependencies=[0],
+            order=1,
+        ),
+    ]
+    task = Task(title="Broken dependency", description="d")
+    result = engine.run(task, steps)
+
+    assert result.state == WorkflowState.FAILED
+    assert result.steps[0].status == TaskStatus.FAILED
+    # The workflow aborted before the dependent step: it was
+    # never attempted, so it stays PENDING — never a fake FAILED
+    # or COMPLETED.
+    assert all(
+        call[0] != "summarize" for call in executor.calls
+    )
+    assert result.steps[1].status == TaskStatus.PENDING
+    assert task.status == TaskStatus.FAILED
+
+
+def test_cancellation_stops_remaining_steps():
+    """Cooperative cancellation: steps after the cancel request
+    do not run; the workflow does not report COMPLETED."""
+
+    executor = MockToolExecutor()
+    engine, agent = make_engine(executor)
+
+    task = Task(title="Cancelled workflow", description="d")
+
+    def cancel_at_first_step(name, params):
+        task.cancel_requested = True
+        return "first done"
+
+    agent._execute_tool = cancel_at_first_step
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(tool_name="summarize", order=1),
+    ]
+    result = engine.run(task, steps)
+
+    assert result.state != WorkflowState.COMPLETED
+    assert all(call[0] != "summarize" for call in executor.calls)
+    assert task.status == TaskStatus.CANCELLED
+
+
+def test_permission_denied_step_records_denial():
+    """A DANGEROUS tool is denied by the policy before any tool
+    execution: the step fails with the denial, later steps never
+    execute, and the task fails truthfully."""
+
+    executor = MockToolExecutor()
+    executor.set("delete_all", "would have deleted")
+    engine, agent = make_engine(executor)
+
+    steps = [
+        TaskStep(tool_name="delete_all", order=0),
+        TaskStep(tool_name="read_note", order=1),
+    ]
+    task = Task(title="Denied step", description="d")
+    result = engine.run(task, steps)
+
+    assert result.state == WorkflowState.FAILED
+    assert all(call[0] != "delete_all" for call in executor.calls)
+    assert result.steps[0].decision.name == "DENY"
+    assert result.steps[0].result is None
+    assert task.status == TaskStatus.FAILED
+
+
+def test_partial_execution_result_reflects_completed_steps_only():
+    """A mid-workflow failure still surfaces the completed
+    steps' results on the task — execution evidence, not
+    wholesale erasure."""
+
+    executor = MockToolExecutor()
+    executor.set("read_note", "good content")
+    executor.set("summarize", RuntimeError("model down"))
+    engine, _ = make_engine(executor)
+
+    steps = [
+        TaskStep(tool_name="read_note", order=0),
+        TaskStep(tool_name="summarize", order=1),
+    ]
+    task = Task(title="Partial", description="d")
+    result = engine.run(task, steps)
+
+    assert result.state == WorkflowState.FAILED
+    assert result.steps[0].status == TaskStatus.COMPLETED
+    assert result.steps[0].result == "good content"
+    assert task.error  # truthful failure reason present

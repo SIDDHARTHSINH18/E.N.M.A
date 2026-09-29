@@ -1,10 +1,33 @@
 import React, { useEffect, useState } from "react";
-import { documentService } from "../../services/documentService";
+import documentService from "../../services/documentService";
+import { formatDateTime } from "../../utils/helpers";
 
 /**
  * DocumentsPanel - Interface for browsing, uploading, and managing documents
  * Provides CRUD operations for the GHOST document system
  */
+const ACTIVE_DOC_KEY = "enma-active-document-id";
+
+const getActiveDocumentId = () => {
+  try {
+    return window.localStorage.getItem(ACTIVE_DOC_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const storeActiveDocumentId = (id) => {
+  try {
+    if (id) {
+      window.localStorage.setItem(ACTIVE_DOC_KEY, id);
+    } else {
+      window.localStorage.removeItem(ACTIVE_DOC_KEY);
+    }
+  } catch {
+    // Storage unavailable (private mode): selection stays in-memory.
+  }
+};
+
 export default function DocumentsPanel({ onClose }) {
   const [documents, setDocuments] = useState([]);
   const [activeDocumentId, setActiveDocumentId] = useState(null);
@@ -19,10 +42,10 @@ export default function DocumentsPanel({ onClose }) {
       setLoading(true);
       setError(null);
       try {
-        const data = await documentService.fetchAll();
+        const data = await documentService.fetchDocuments();
         setDocuments(data.documents || []);
         // Set active document from localStorage if available
-        const activeId = documentService.getActiveDocumentId();
+        const activeId = getActiveDocumentId();
         if (activeId) {
           setActiveDocumentId(activeId);
         }
@@ -48,10 +71,10 @@ export default function DocumentsPanel({ onClose }) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await documentService.upload(file);
+      const response = await documentService.uploadDocument(file);
       setDocuments(prev => [...prev, response]);
       setActiveDocumentId(response.document_id);
-      documentService.setActiveDocument(response.document_id);
+      storeActiveDocumentId(response.document_id);
       
       setSelectedFile(null);
       setUploading(false);
@@ -65,7 +88,7 @@ export default function DocumentsPanel({ onClose }) {
 
   const handleSetActive = async (docId) => {
     try {
-      await documentService.setActiveDocument(docId);
+      storeActiveDocumentId(docId);
       setActiveDocumentId(docId);
     } catch (err) {
       setError("Failed to set active document");
@@ -79,7 +102,7 @@ export default function DocumentsPanel({ onClose }) {
       setDocuments(prev => prev.filter(doc => doc.document_id !== docId));
       if (activeDocumentId === docId) {
         setActiveDocumentId(null);
-        documentService.clearActiveDocument();
+        storeActiveDocumentId(null);
       }
     } catch (err) {
       setError("Failed to delete document");
@@ -148,10 +171,10 @@ export default function DocumentsPanel({ onClose }) {
       {/* Documents List */}
       <div className="documents-panel-list">
         {loading && !documents.length ? (
-          <div className="documents-panel-loading">
+            <div className="documents-panel-loading">
             <div className="documents-panel-loading-dots">
               <span /> <span /> <span />
-            </span>
+            </div>
             <span className="documents-panel-loading-text">LOADING DOCUMENT VAULT...</span>
           </div>
         ) : (

@@ -2,10 +2,17 @@
 import threading
 from typing import List, Dict
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+# The optional ML stack (sentence_transformers/torch, sklearn/scipy)
+# is imported LAZILY at first use, not at module import. Core ENMA
+# startup must not require native ML libraries: on locked-down
+# machines (e.g. Windows Smart App Control) the scipy native DLL can
+# be blocked, and a module-level import here would kill the whole
+# backend for an OPTIONAL capability. When the stack is unavailable,
+# semantic retrieval degrades honestly to keyword/phrase scoring and
+# create_embeddings raises — nothing fabricates embeddings.
 
-from sentence_transformers import SentenceTransformer
+ML_STATE_AVAILABLE = "AVAILABLE"
+ML_STATE_UNAVAILABLE = "UNAVAILABLE"
 
 
 class DocumentRetriever:
@@ -14,6 +21,10 @@ class DocumentRetriever:
 
     _embedding_model = None
     _embedding_lock = threading.Lock()
+
+    # Optional-subsystem state, recorded at first use.
+    _ml_state = None
+    _ml_unavailable_reason: str | None = None
 
     def __init__(
         self,
@@ -39,6 +50,26 @@ class DocumentRetriever:
         # or semantic retrieval are actually required.
 
     @classmethod
+    def ml_status(cls) -> dict:
+        """
+        Honest optional-subsystem state: has the ML stack been
+        attempted, and is it AVAILABLE or UNAVAILABLE (with the
+        import failure reason). No fabrication either way.
+        """
+
+        return {
+            "state": cls._ml_state,
+            "reason": cls._ml_unavailable_reason,
+        }
+
+    @classmethod
+    def _load_sentence_transformer(cls):
+
+        from sentence_transformers import SentenceTransformer
+
+        return SentenceTransformer
+
+    @classmethod
     def _get_embedding_model(cls):
 
         if cls._embedding_model is None:
@@ -47,6 +78,18 @@ class DocumentRetriever:
 
                 if cls._embedding_model is None:
 
+                    try:
+                        SentenceTransformer = (
+                            cls._load_sentence_transformer()
+                        )
+                    except Exception as error:
+                        cls._ml_state = ML_STATE_UNAVAILABLE
+                        cls._ml_unavailable_reason = (
+                            f"sentence_transformers unavailable: "
+                            f"{type(error).__name__}: {error}"
+                        )
+                        raise
+
                     print(
                         f"Loading embedding model: {cls.MODEL_NAME}"
                     )
@@ -54,6 +97,9 @@ class DocumentRetriever:
                     cls._embedding_model = SentenceTransformer(
                         cls.MODEL_NAME
                     )
+
+                    cls._ml_state = ML_STATE_AVAILABLE
+                    cls._ml_unavailable_reason = None
 
                     print(
                         "Embedding model loaded successfully."
@@ -174,6 +220,10 @@ class DocumentRetriever:
 
         try:
 
+            from sklearn.metrics.pairwise import (
+                cosine_similarity,
+            )
+
             embedding_model = self._get_embedding_model()
 
             query_embedding = embedding_model.encode(
@@ -206,6 +256,14 @@ class DocumentRetriever:
             ]
 
         except Exception as error:
+
+            cls = type(self)
+            if cls._ml_state is None:
+                cls._ml_state = ML_STATE_UNAVAILABLE
+                cls._ml_unavailable_reason = (
+                    f"semantic scoring unavailable: "
+                    f"{type(error).__name__}: {error}"
+                )
 
             print(
                 f"Semantic retrieval error: {error}"
@@ -357,8 +415,19 @@ class DocumentRetriever:
         # --------------------------------------------------
         # TF-IDF RETRIEVAL
         # --------------------------------------------------
+        # sklearn/scipy are optional native ML dependencies;
+        # imported lazily. If unavailable, TF-IDF contributes
+        # 0.0 and retrieval degrades honestly to keyword +
+        # phrase scoring (scores still reported per chunk).
 
         try:
+
+            from sklearn.feature_extraction.text import (
+                TfidfVectorizer,
+            )
+            from sklearn.metrics.pairwise import (
+                cosine_similarity,
+            )
 
             vectorizer = TfidfVectorizer(
                 stop_words="english",
@@ -380,6 +449,20 @@ class DocumentRetriever:
             )[0]
 
         except ValueError:
+
+            tfidf_scores = [
+                0.0
+                for _ in chunks
+            ]
+
+        except ImportError as error:
+
+            if cls._ml_state is None:
+                cls._ml_state = ML_STATE_UNAVAILABLE
+                cls._ml_unavailable_reason = (
+                    f"sklearn unavailable: "
+                    f"{type(error).__name__}: {error}"
+                )
 
             tfidf_scores = [
                 0.0

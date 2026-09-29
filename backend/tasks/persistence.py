@@ -25,9 +25,12 @@ task history survives a process restart. Design constraints:
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from backend.core.task import Task, TaskStatus
 
@@ -38,6 +41,12 @@ class TaskPersistence:
     """JSONL-backed store: load() once, record() per change."""
 
     def __init__(self, path: str | None = None):
+        # Truthfulness: the last failed append is recorded here so
+        # callers can detect that state was NOT persisted. Best-
+        # effort by design (a failing store never breaks task
+        # execution), but never silently misrepresented as success.
+        self.last_write_error: str | None = None
+
         if path:
             self.path = Path(path)
         else:
@@ -206,6 +215,16 @@ class TaskPersistence:
                     )
                     + "\n"
                 )
-        except (OSError, TypeError, ValueError):
-            # Persistence is best-effort by design.
-            pass
+
+            self.last_write_error = None
+        except (OSError, TypeError, ValueError) as error:
+            # Persistence is best-effort by design — but the
+            # failure is logged and exposed, never swallowed
+            # into a fake success.
+            self.last_write_error = (
+                f"{type(error).__name__}: {error}"
+            )
+            logger.warning(
+                "Task persistence write failed: %s",
+                self.last_write_error,
+            )

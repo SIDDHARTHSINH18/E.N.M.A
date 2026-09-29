@@ -518,11 +518,14 @@ async def retry_task(task_id: str, http_request: Request):
     # only advisory plans (no recorded steps) keep the plain
     # re-queued PENDING semantics. A ValueError here means the
     # runner's start gate refused (e.g. a cancellation racing
-    # the retry); the task keeps its current audited state.
+    # the retry); the refusal reason is surfaced instead of
+    # being swallowed, and the task keeps its audited state.
+    rejection_reason: str | None = None
     try:
         execution = await build_pipeline().retry_execution(task_id)
-    except ValueError:
+    except ValueError as error:
         execution = None
+        rejection_reason = str(error)
 
     task = task_service.get(task_id, owner=_owner(http_request))
 
@@ -536,7 +539,11 @@ async def retry_task(task_id: str, http_request: Request):
                 "reason": execution.get("reason"),
             }
             if execution
-            else None
+            else {
+                "state": task.status.value,
+                "executed": False,
+                "reason": rejection_reason,
+            }
         ),
     }
 

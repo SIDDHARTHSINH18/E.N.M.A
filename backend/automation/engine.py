@@ -164,6 +164,12 @@ class AutomationEngine:
                 task.status is TaskStatus.CANCELLED
                 or task.cancel_requested
             ):
+                # The task record must agree with the reported
+                # workflow state: a cancelled task is terminal,
+                # never left RUNNING (which would make it
+                # unretryable and lie about its lifecycle).
+                task.status = TaskStatus.CANCELLED
+                task.error = "task was cancelled"
                 return AutomationResult(
                     task_id=task.id,
                     state=WorkflowState.CANCELLED,
@@ -246,9 +252,7 @@ class AutomationEngine:
 
         # Every step completed.
         task.status = TaskStatus.COMPLETED
-        task.result = {
-            step.tool_name: step.result for step in ordered
-        }
+        task.result = self._result_mapping(ordered)
         task.error = None
         return AutomationResult(
             task_id=task.id,
@@ -299,6 +303,12 @@ class AutomationEngine:
                 task.status is TaskStatus.CANCELLED
                 or task.cancel_requested
             ):
+                # The task record must agree with the reported
+                # workflow state: a cancelled task is terminal,
+                # never left RUNNING (which would make it
+                # unretryable and lie about its lifecycle).
+                task.status = TaskStatus.CANCELLED
+                task.error = "task was cancelled"
                 return AutomationResult(
                     task_id=task.id,
                     state=WorkflowState.CANCELLED,
@@ -375,15 +385,37 @@ class AutomationEngine:
                 )
 
         task.status = TaskStatus.COMPLETED
-        task.result = {
-            step.tool_name: step.result for step in ordered
-        }
+        task.result = self._result_mapping(ordered)
         task.error = None
         return AutomationResult(
             task_id=task.id,
             state=WorkflowState.COMPLETED,
             steps=ordered,
         )
+
+    @staticmethod
+    def _result_mapping(ordered: list) -> dict:
+        """
+        Final task result keyed by tool name. Two steps using
+        the SAME tool must not overwrite each other: the first
+        occurrence keeps the plain name (backwards compatible),
+        later occurrences get "<tool>#<n>" keys.
+        """
+
+        counts: dict = {}
+        mapping: dict = {}
+
+        for step in ordered:
+            n = counts.get(step.tool_name, 0)
+            counts[step.tool_name] = n + 1
+            key = (
+                step.tool_name
+                if n == 0
+                else f"{step.tool_name}#{n}"
+            )
+            mapping[key] = step.result
+
+        return mapping
 
     @staticmethod
     def _sync_step(

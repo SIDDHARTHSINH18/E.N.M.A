@@ -78,20 +78,6 @@ const authService = {
   },
 
   /**
-   * Refresh authentication token
-   * @returns {Promise<string>} - New token
-   */
-  refreshToken: async () => {
-    const response = await apiService.post('/api/refresh-token');
-    if (response.access_token) {
-      sessionStorage.setItem(AUTH_TOKEN_KEY, response.access_token);
-      clearLegacyTokenStorage();
-      return response.access_token;
-    }
-    throw new Error('Token refresh failed');
-  },
-
-  /**
    * Validate current token
    * @returns {Promise<boolean>} - True if token is valid
    */

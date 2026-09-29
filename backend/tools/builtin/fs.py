@@ -66,6 +66,28 @@ def canonical_execution_root() -> Path:
     )
 
 
+# File names that must never be read by model-invoked tools.
+# This is the clearly-safe portion of the read boundary: the tools
+# otherwise keep their documented sanctioned-absolute-read semantics
+# (jailing ALL reads is deferred and must not silently break
+# legitimate project reads).
+SECRET_FILE_NAMES = (".env", "config.env")
+
+
+def _refuse_secret_files(path_obj: Path, display: str) -> None:
+    """Refuse reads of environment/secret files by name."""
+
+    name = path_obj.name.lower()
+
+    if (
+        name in SECRET_FILE_NAMES
+        or name.startswith(".env.")
+    ):
+        raise ToolExecutionError(
+            f"Refusing to read a secret/environment file: '{display}'."
+        )
+
+
 def resolve_tool_path(raw_path: str) -> tuple[str, Path]:
     """
     Centralized safe path resolver at the filesystem execution
@@ -138,6 +160,8 @@ def _validated_path(params: dict, tool_name: str) -> tuple[str, Path]:
         raise ToolExecutionError(
             f"Refusing to follow symbolic link: '{path}'."
         )
+
+    _refuse_secret_files(path_obj, path)
 
     return path, path_obj
 
@@ -270,6 +294,20 @@ def _write_validated_path(params: dict) -> tuple[str, Path]:
             f"Refusing to write through symbolic link: '{path}'."
         )
 
+    # Intermediate-parent symlink check: a symlinked directory
+    # INSIDE the root must not redirect a write outside the
+    # workspace (the final-component check above is not enough).
+    root = canonical_execution_root()
+
+    for parent in path_obj.parents:
+        if parent == root:
+            break
+        if parent.is_symlink():
+            raise ToolExecutionError(
+                "Refusing to write through a symbolic link "
+                f"directory: '{path}'."
+            )
+
     return path, path_obj
 
 
@@ -316,4 +354,23 @@ def fs_write_file(params: dict) -> dict:
             f"Cannot write '{path}': {error.strerror}."
         )
 
-    return {"path": path, "bytes": len(encoded)}
+    # Verification boundary: re-read from disk and compare. The
+    # result is VERIFIED only with this independent evidence —
+    # the write reporting success is COMPLETED, the re-read
+    # confirms it. A mismatch is a hard failure, never smoothed
+    # over.
+    try:
+        reread = path_obj.read_bytes()
+    except OSError as error:
+        raise ToolExecutionError(
+            f"Write to '{path}' could not be verified: "
+            f"{error.strerror}."
+        )
+
+    if reread != encoded:
+        raise ToolExecutionError(
+            f"Write to '{path}' could not be verified: the file "
+            "content on disk does not match what was written."
+        )
+
+    return {"path": path, "bytes": len(encoded), "verified": True}

@@ -34,44 +34,6 @@ const documentService = {
     return response;
   },
 
-  /**
-   * Set active document
-   * @param {string} documentId - ID of document to set as active
-   * @returns {Promise<Object>} - Response
-   */
-  setActiveDocument: async (documentId) => {
-    const response = await apiService.post(`/api/documents/${documentId}/activate`);
-    return response;
-  },
-
-  /**
-   * Clear active document
-   * @returns {Promise<Object>} - Response
-   */
-  clearActiveDocument: async () => {
-    const response = await apiService.post('/api/documents/clear');
-    return response;
-  },
-
-  /**
-   * Fetch document content or metadata
-   * @param {string} documentId - Document ID
-   * @returns {Promise<Object>} - Document data
-   */
-  fetchDocument: async (documentId) => {
-    const response = await apiService.get(`/api/documents/${documentId}`);
-    return response;
-  },
-
-  /**
-   * Search within documents
-   * @param {string} query - Search query
-   * @returns {Promise<Array>} - Search results
-   */
-  searchDocuments: async (query) => {
-    const response = await apiService.get(`/api/documents/search?q=${encodeURIComponent(query)}`);
-    return response || [];
-  },
 };
 
 export default documentService;

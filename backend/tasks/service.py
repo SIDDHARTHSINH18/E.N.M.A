@@ -69,6 +69,35 @@ class TaskService:
         for task_id, task in self._persistence.load().items():
             self._tasks[task_id] = task
 
+        self._reconcile_recovered()
+
+    def _reconcile_recovered(self) -> None:
+        """
+        Startup reconciliation: a task persisted as RUNNING was
+        interrupted by a process restart — its in-memory workflow
+        steps are gone and it can never complete. Mark it FAILED
+        with an explicit recovery reason (via the validated state
+        machine, RUNNING -> FAILED) so it can be retried like any
+        other failed task. Never reported as COMPLETED.
+        """
+
+        for task in list(self._tasks.values()):
+            if task.status is not TaskStatus.RUNNING:
+                continue
+
+            task.error = (
+                "Task was RUNNING when the previous process "
+                "exited; recovered as FAILED on startup. "
+                "In-flight workflow steps were not persisted."
+            )
+
+            try:
+                self.mark_failed(task, task.error)
+            except ValueError:
+                # State machine disagreement must never break
+                # startup; leave the task inspectable as loaded.
+                pass
+
     def _persist(self, task: Task) -> None:
         if self._persistence is not None:
             self._persistence.record(task)

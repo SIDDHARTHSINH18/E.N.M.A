@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { memoryService } from "../../services/memoryService";
+import memoryService from "../../services/memoryService";
+import { formatDateTime } from "../../utils/helpers";
 
 /**
  * MemoryPanel - Interface for browsing, searching, and managing memories
@@ -18,9 +19,10 @@ export default function MemoryPanel({ onClose }) {
       setLoading(true);
       setError(null);
       try {
-        const data = await memoryService.fetchAll();
-        setMemories(data.memories || []);
-        applySearchFilter();
+        const data = await memoryService.fetchMemories();
+        const list = data.memories || [];
+        setMemories(list);
+        applySearchFilter(list);
       } catch (err) {
         setError("Failed to load memories");
         console.error("Memory load error:", err);
@@ -33,14 +35,14 @@ export default function MemoryPanel({ onClose }) {
   }, [searchQuery]);
 
   // Apply search filter
-  const applySearchFilter = () => {
+  const applySearchFilter = (source = memories) => {
     if (!searchQuery.trim()) {
-      setFilteredMemories(memories);
+      setFilteredMemories(source);
       return;
     }
 
     const queryLower = searchQuery.toLowerCase();
-    const filtered = memories.filter(memory => 
+    const filtered = source.filter(memory =>
       (memory.content || "").toLowerCase().includes(queryLower) ||
       (memory.tags || []).some(tag => tag.toLowerCase().includes(queryLower)) ||
       (memory.title || "").toLowerCase().includes(queryLower)
@@ -54,10 +56,10 @@ export default function MemoryPanel({ onClose }) {
 
   const handleDeleteMemory = async (id) => {
     try {
-      await memoryService.delete(id);
+      await memoryService.deleteMemory(id);
       // Remove from local state
-      setMemories(prev => memories.filter(m => m.id !== id));
-      setFilteredMemories(prev => filteredMemories.filter(m => m.id !== id));
+      setMemories(prev => prev.filter(m => m.id !== id));
+      setFilteredMemories(prev => prev.filter(m => m.id !== id));
     } catch (err) {
       setError("Failed to delete memory");
       console.error("Delete memory error:", err);
@@ -70,7 +72,7 @@ export default function MemoryPanel({ onClose }) {
     }
     
     try {
-      await memoryService.deleteAll();
+      await memoryService.deleteAllMemories();
       setMemories([]);
       setFilteredMemories([]);
     } catch (err) {
@@ -131,10 +133,10 @@ export default function MemoryPanel({ onClose }) {
       {/* Memories List */}
       <div className="memory-panel-list">
         {loading && !memories.length ? (
-          <div className="memory-panel-loading">
+            <div className="memory-panel-loading">
             <div className="memory-panel-loading-dots">
               <span /> <span /> <span />
-            </span>
+            </div>
             <span className="memory-panel-loading-text">LOADING MEMORY CORE...</span>
           </div>
         ) : (
@@ -194,7 +196,6 @@ export default function MemoryPanel({ onClose }) {
                       </button>
                     </div>
                   </div>
-                </div>
               ))}
             </div>
           )

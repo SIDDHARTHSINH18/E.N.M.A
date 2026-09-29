@@ -193,28 +193,34 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def validate_startup_config():
     """
     Fail fast on a half-configured backend.
 
-    A missing NVIDIA_API_KEY or GHOST_AUTH_PASSWORD
-    previously surfaced only as errors on first use.
-    GHOST refuses to start instead.
+    A missing provider key or GHOST_AUTH_PASSWORD previously
+    surfaced only as errors on first use; GHOST refuses to
+    start instead. The provider checked is the orchestrator's
+    default, or the provider named by ENMA_DEFAULT_PROVIDER —
+    the desktop layer sets that to the provider the app
+    actually talks to (Groq), so the packaged config template
+    and this check agree.
     """
 
-    status = provider_status()
+    status = provider_status(
+        os.getenv("ENMA_DEFAULT_PROVIDER") or None
+    )
 
     if not status["api_key_present"]:
 
         raise RuntimeError(
             "\n"
             "========================================\n"
-            "NVIDIA_API_KEY is not configured.\n"
+            f"{status['provider'].upper()}_API_KEY is not "
+            "configured.\n"
             "\n"
             "Fix:\n"
-            "  1. Copy .env.example to .env\n"
-            "  2. Set NVIDIA_API_KEY in .env\n"
+            "  1. Open the ENMA configuration file (or .env)\n"
+            f"  2. Set {status['provider'].upper()}_API_KEY in it\n"
             "  3. Restart the backend\n"
             "\n"
             "GHOST refuses to start with a\n"
@@ -232,7 +238,7 @@ async def lifespan(app: FastAPI):
             "Since M2 the API requires a passphrase.\n"
             "\n"
             "Fix:\n"
-            "  1. Open .env\n"
+            "  1. Open the ENMA configuration file (or .env)\n"
             "  2. Set GHOST_AUTH_PASSWORD to a strong\n"
             "     passphrase of your choice\n"
             "  3. Restart the backend\n"
@@ -242,6 +248,17 @@ async def lifespan(app: FastAPI):
             "default.\n"
             "========================================"
         )
+
+    return status
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Fail fast on a half-configured backend.
+    """
+
+    status = validate_startup_config()
 
     logger.info(
         "Provider '%s' configured "

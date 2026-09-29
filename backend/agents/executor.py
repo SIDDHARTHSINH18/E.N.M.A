@@ -24,6 +24,7 @@ be attached to its existing `agents` registry).
 """
 
 from dataclasses import dataclass
+import asyncio
 import inspect
 from datetime import datetime
 from typing import Any, Callable, Optional
@@ -223,14 +224,25 @@ class Agent:
         task.updated_at = _now()
 
         try:
-            output = self._execute_tool(
-                tool_name,
-                params if params is not None else {},
-            )
-
+            # Async boundary: plain synchronous tools (filesystem,
+            # DNS, sync HTTP, memory reads) run on a worker thread
+            # so one slow tool cannot freeze the whole event loop.
             # Awaitable tool implementations (e.g. the model
-            # gateway) are awaited in place; plain synchronous
-            # tools behave exactly as they do under execute().
+            # gateway) keep their existing in-loop semantics.
+            if inspect.iscoroutinefunction(self._execute_tool):
+                output = await self._execute_tool(
+                    tool_name,
+                    params if params is not None else {},
+                )
+            else:
+                output = await asyncio.to_thread(
+                    self._execute_tool,
+                    tool_name,
+                    params if params is not None else {},
+                )
+
+            # Some sync dispatchers return awaitables from async
+            # tool implementations; they are awaited in place.
             if inspect.isawaitable(output):
                 output = await output
 
