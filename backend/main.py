@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -105,7 +105,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         ):
 
             logger.warning(
-                "GHOST API is being accessed from a "
+                "ENMA API is being accessed from a "
                 "non-loopback address (%s). If this is "
                 "not intentional, stop the server and "
                 "bind to 127.0.0.1.",
@@ -223,7 +223,7 @@ def validate_startup_config():
             f"  2. Set {status['provider'].upper()}_API_KEY in it\n"
             "  3. Restart the backend\n"
             "\n"
-            "GHOST refuses to start with a\n"
+            "ENMA refuses to start with a\n"
             "half-configured provider.\n"
             "========================================"
         )
@@ -243,7 +243,7 @@ def validate_startup_config():
             "     passphrase of your choice\n"
             "  3. Restart the backend\n"
             "\n"
-            "GHOST refuses to start without it —\n"
+            "ENMA refuses to start without it —\n"
             "an unauthenticated API is not a safe\n"
             "default.\n"
             "========================================"
@@ -272,7 +272,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="GHOST — Personal AI Operating System",
+    title="ENMA — Personal AI Operating System",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -305,7 +305,7 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {
-        "message": "GHOST API is running"
+        "message": "ENMA API is running"
     }
 
 

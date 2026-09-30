@@ -135,8 +135,8 @@ export default function TaskCard({ task, onTaskAction }) {
   const tone = statusTone(sections.status);
   const action = lifecycleActionFor(sections.status);
 
-  const runLifecycleAction = async () => {
-    if (!action || !sections.taskId || actionBusy || !onTaskAction) {
+  const runLifecycleAction = async (which = action) => {
+    if (!which || !sections.taskId || actionBusy || !onTaskAction) {
       return;
     }
 
@@ -144,12 +144,24 @@ export default function TaskCard({ task, onTaskAction }) {
     setActionError(null);
 
     try {
-      await onTaskAction(action, sections.taskId);
+      await onTaskAction(
+        which,
+        sections.taskId,
+        which === "approve" || which === "deny"
+          ? sections.approvalId
+          : null
+      );
     } catch (error) {
+      const labels = {
+        cancel: "Cancel",
+        retry: "Retry",
+        approve: "Approve",
+        deny: "Deny",
+      };
       setActionError(
         error?.message
-          ? `${action === "cancel" ? "Cancel" : "Retry"} failed: ${error.message}`
-          : `${action === "cancel" ? "Cancel" : "Retry"} failed.`,
+          ? `${labels[which] || which} failed: ${error.message}`
+          : `${labels[which] || which} failed.`,
       );
     } finally {
       setActionBusy(false);
@@ -221,14 +233,35 @@ export default function TaskCard({ task, onTaskAction }) {
 
       {sections.approvalId && (
         <div className="task-card-note">
-          Approval required · id {sections.approvalId}
+          Approval required — nothing has executed yet. · id {sections.approvalId}
+        </div>
+      )}
+
+      {sections.approvalId && sections.taskId && (
+        <div className="task-card-approval-actions">
+          <button
+            className="task-card-lifecycle-btn task-card-approve-btn"
+            onClick={() => runLifecycleAction("approve")}
+            disabled={actionBusy}
+            aria-label="Approve task"
+          >
+            {actionBusy ? "Working…" : "Approve & Run"}
+          </button>
+          <button
+            className="task-card-lifecycle-btn task-card-deny-btn"
+            onClick={() => runLifecycleAction("deny")}
+            disabled={actionBusy}
+            aria-label="Deny task"
+          >
+            Deny
+          </button>
         </div>
       )}
 
       {action && sections.taskId && (
         <button
           className="task-card-lifecycle-btn"
-          onClick={runLifecycleAction}
+          onClick={() => runLifecycleAction()}
           disabled={actionBusy}
           aria-label={`${actionLabel} task`}
         >

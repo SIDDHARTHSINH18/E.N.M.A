@@ -77,9 +77,9 @@ async def get_graph(http_request: Request):
     # ============================================================
 
     nodes.append({
-        "id": "GHOST",
-        "type": "GHOST",
-        "label": "GHOST",
+        "id": "ENMA",
+        "type": "ENMA",
+        "label": "ENMA",
         "description": "Personal AI operating system.",
     })
 
@@ -267,17 +267,17 @@ async def get_graph(http_request: Request):
     # ============================================================
 
     nodes.append({
-        "id": "project-GHOST",
+        "id": "project-ENMA",
         "type": "project",
-        "label": "GHOST",
+        "label": "ENMA",
         "description": (
-            "GHOST personal AI operating system."
+            "ENMA personal AI operating system."
         ),
     })
 
     edges.append({
         "source": "GHOST",
-        "target": "project-GHOST",
+        "target": "project-ENMA",
         "type": "project",
     })
 

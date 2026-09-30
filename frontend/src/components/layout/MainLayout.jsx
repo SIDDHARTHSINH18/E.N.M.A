@@ -42,6 +42,7 @@ export default function MainLayout({
   fileInputRef = null,
   handleFileChange = () => {},
   sendMessage = () => {},
+  stopGeneration = () => {},
   handleKeyDown = () => {},
   newChat = () => {},
   clearDocument = () => {},
@@ -149,7 +150,7 @@ export default function MainLayout({
   // Chat context: the node selected in the Mind, carried into the
   // conversation so the user can ask GHOST about it.
   const contextNode =
-    selectedNode && selectedNode.id !== "GHOST"
+    selectedNode && selectedNode.id !== "ENMA"
       ? { type: selectedNode.type, label: selectedNode.label || selectedNode.id }
       : null;
 
@@ -634,14 +635,25 @@ export default function MainLayout({
           >
             +
           </button>
-          <button
-            className="send-button"
-            onClick={sendMessage}
-            disabled={loading || !message.trim()}
-            title="Send"
-          >
-            ↗
-          </button>
+          {loading ? (
+            <button
+              className="send-button stop-button"
+              type="button"
+              onClick={stopGeneration}
+              title="Stop the current operation"
+            >
+              ■
+            </button>
+          ) : (
+            <button
+              className="send-button"
+              onClick={sendMessage}
+              disabled={!message.trim()}
+              title="Send"
+            >
+              ↗
+            </button>
+          )}
         </div>
       </section>
 

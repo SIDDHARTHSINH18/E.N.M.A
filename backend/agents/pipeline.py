@@ -507,7 +507,17 @@ class AgentPipeline:
             and result.status == TaskStatus.COMPLETED
         )
 
-        if fallback:
+        # Honesty rule: a skill reporting COMPLETED with neither
+        # executed steps nor produced output has proven nothing.
+        # Treat it as advisory (NO_STEPS, task stays PENDING) so a
+        # model-generated plan is never mistaken for execution.
+        unproven_completion = (
+            result.status == TaskStatus.COMPLETED
+            and not result.steps
+            and result.output in (None, "", [], {})
+        )
+
+        if fallback or unproven_completion:
             task = outcome.task
 
             if task.status == TaskStatus.COMPLETED:
@@ -518,6 +528,7 @@ class AgentPipeline:
             if (
                 result.status == TaskStatus.COMPLETED
                 and not fallback
+                and not unproven_completion
             )
             else "NO_STEPS"
             if result.status == TaskStatus.COMPLETED
@@ -534,10 +545,18 @@ class AgentPipeline:
             "skill": result.skill_name,
             "skill_status": result.status.value,
             "reason": (
-                "planner fell back to deterministic defaults; "
-                f"skill '{result.skill_name}' produced an "
-                "advisory plan only, so the task remains pending"
+                (
+                    "planner fell back to deterministic defaults; "
+                    f"skill '{result.skill_name}' produced an "
+                    "advisory plan only, so the task remains pending"
+                )
                 if fallback
+                else (
+                    f"skill '{result.skill_name}' reported completion "
+                    "with no executed steps or output; the task "
+                    "remains pending"
+                )
+                if unproven_completion
                 else f"skill '{result.skill_name}' executed"
             ),
         }

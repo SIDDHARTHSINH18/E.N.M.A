@@ -145,9 +145,14 @@ function fetchManifest(manifestUrl, timeoutMs = 10000, _redirects = 0) {
 
           if (res.statusCode !== 200) {
             res.resume();
-            reject(
-              new Error(`manifest fetch failed: HTTP ${res.statusCode}`)
-            );
+            // Honest, specific reason: a 404 from the GitHub
+            // releases API means no release was ever published
+            // for this repository — not a network failure.
+            const reason =
+              res.statusCode === 404
+                ? "no published release found for this repository"
+                : `manifest fetch failed: HTTP ${res.statusCode}`;
+            reject(new Error(reason));
             return;
           }
 

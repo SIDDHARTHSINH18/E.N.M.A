@@ -40,6 +40,7 @@ function App() {
 
   const graphRef = useRef(null);
   const fileInputRef = useRef(null);
+  const abortRef = useRef(null);
 
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [selectedNode, setSelectedNode] = useState(null);
@@ -564,10 +565,20 @@ function App() {
   }
 
   // Messaging
+  function stopGeneration() {
+    // Cancels the in-flight request: the streaming reader aborts and
+    // the backend stream ends when the client disconnects. Any task
+    // already created remains cancellable via its TaskCard.
+    abortRef.current?.abort();
+  }
+
   async function sendMessage() {
     if (!message.trim() || loading) return;
 
     const userMessage = message.trim();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const signal = controller.signal;
 
     setMessages((prev) => [
       ...prev,
@@ -603,6 +614,7 @@ function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ request: userMessage }),
+          signal,
         });
 
         const data = await response.json().catch(() => ({}));
@@ -631,10 +643,11 @@ function App() {
         } else if (
           taskStatus === "PENDING_APPROVAL" ||
           taskStatus === "WAITING_FOR_APPROVAL" ||
-          taskStatus === "PAUSED"
+          taskStatus === "PAUSED" ||
+          taskStatus === "PENDING"
         ) {
           taskIntro =
-            "This task needs your approval before it can continue.";
+            "The task is planned but not finished — check the task card below for its actual state (awaiting approval or execution).";
         } else if (taskStatus === "FAILED") {
           taskIntro = "The task could not be completed.";
         }
@@ -662,7 +675,7 @@ function App() {
       // Carry the Mind selection into the conversation so the
       // user can ask GHOST about the node they were inspecting.
       const contextLine =
-        selectedNode && selectedNode.id !== "GHOST"
+        selectedNode && selectedNode.id !== "ENMA"
           ? `\n\n(Mind context: the user has the ${selectedNode.type} node "${selectedNode.label}" selected in their knowledge graph.)`
           : "";
 
@@ -676,6 +689,7 @@ function App() {
           document_id: documentId,
           history,
         }),
+        signal,
       });
 
       if (!response.ok) {
@@ -724,20 +738,38 @@ function App() {
       updateAssistantMessage(assistantResponse.trim(), sourcePages);
       setTimeout(() => loadGraph(), 500);
     } catch (error) {
-      console.error("GHOST request error:", error);
-      updateAssistantMessage(`ENMA ERROR · ${error.message}`, []);
+      if (error.name === "AbortError") {
+        updateAssistantMessage(
+          "CANCELLED — the operation was stopped by the user.",
+          []
+        );
+      } else {
+        console.error("GHOST request error:", error);
+        updateAssistantMessage(`ENMA ERROR · ${error.message}`, []);
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
     }
   }
 
-  // M3 task lifecycle: run a Cancel/Retry action from a TaskCard,
-  // then refresh the task state so the card shows the new status.
-  async function handleTaskAction(action, taskId) {
+  // M3 task lifecycle: run a Cancel/Retry/Approve/Deny action from a
+  // TaskCard, then refresh the task state so the card shows the new
+  // status. Approve records the approval decision and then actually
+  // resumes execution through the task runner.
+  async function handleTaskAction(action, taskId, approvalId = null) {
     if (action === "cancel") {
       await taskService.cancelTask(taskId);
     } else if (action === "retry") {
       await taskService.retryTask(taskId);
+    } else if (action === "approve" || action === "deny") {
+      if (!approvalId) {
+        throw new Error("No pending approval record for this task.");
+      }
+      await taskService.decideApproval(approvalId, action === "approve");
+      if (action === "approve") {
+        await taskService.resumeTask(taskId);
+      }
     } else {
       throw new Error(`Unknown task action: ${action}`);
     }
@@ -759,11 +791,11 @@ function App() {
               ...item.taskData,
               task: {
                 ...item.taskData.task,
-                status: refreshed.status,
-                result: refreshed.result,
-                error: refreshed.error,
+                status: refreshed.status ?? item.taskData.task?.status,
+                result: refreshed.result ?? item.taskData.task?.result,
+                error: refreshed.error ?? item.taskData.task?.error,
               },
-              execution: {
+              execution: refreshed.execution || {
                 ...item.taskData.execution,
                 state: refreshed.status,
               },
@@ -1237,6 +1269,7 @@ function App() {
       fileInputRef={fileInputRef}
       handleFileChange={handleFileChange}
       sendMessage={sendMessage}
+      stopGeneration={stopGeneration}
       handleKeyDown={handleKeyDown}
       newChat={newChat}
       clearDocument={clearDocument}

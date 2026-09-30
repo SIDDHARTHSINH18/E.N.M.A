@@ -1,6 +1,9 @@
-﻿import asyncio
+import asyncio
+import json
 import logging
 import re
+from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -8,6 +11,7 @@ from pydantic import BaseModel
 
 from backend.audit.log import redact_text
 from backend.tools.builtin.web_search import web_search, WebSearchError
+from backend.tools.builtin.web_fetch import fetch_page, WebFetchError
 from backend.core.orchestrator import Orchestrator
 from backend.core.security import (
     get_rate_limits,
@@ -896,14 +900,18 @@ def detect_current_events_request(text: str) -> bool:
 def build_current_events_context(
     message: str,
     search_result: dict,
+    retrieved_pages: list | None = None,
 ) -> str:
     """
     Compose the user turn for a current-events request whose
     web search SUCCEEDED. Evidence is provider-returned search
-    leads (title/url/domain/snippet) wrapped as untrusted
-    content; the model may only ground claims in it and must
-    cite provenance.
+    leads (title/url/domain/snippet) plus, where retrieval
+    succeeded, the actual page content fetched from the
+    source — all wrapped as untrusted content; the model may
+    only ground claims in it and must cite provenance.
     """
+
+    retrieved_pages = retrieved_pages or []
 
     results = search_result.get("results") or []
 
@@ -923,16 +931,46 @@ def build_current_events_context(
 
     evidence = "\n\n".join(lines) if lines else "(no results)"
 
+    page_blocks = []
+    for index, page in enumerate(retrieved_pages, start=1):
+        text = str(page.get("text") or "").strip()
+        if not text:
+            continue
+        page_blocks.append(
+            f"[PAGE {index}] {page.get('title') or '(untitled)'}\n"
+            f"    URL: {page.get('url')}\n"
+            f"    Retrieved at: {page.get('retrieved_at')}\n"
+            f"    Content:\n{text[:8000]}"
+        )
+
+    retrieved_section = (
+        "\n\nRETRIEVED PAGE CONTENT (fetched in full just now "
+        "from the sources above):\n\n"
+        + "\n\n".join(page_blocks)
+        if page_blocks
+        else ""
+    )
+
+    retrieval_note = (
+        f"{len(page_blocks)} of the sources below were fetched in "
+        "full; prefer their content over snippets for factual "
+        "detail."
+        if page_blocks
+        else "These are search leads with provider snippets; "
+        "no page could be fetched in full, so treat snippet "
+        "detail as unverified and say so when it is not enough."
+    )
+
     return (
         "The user is asking about CURRENT or RECENT information.\n\n"
         "HARD RULES:\n"
         "- Ground every factual claim ONLY in the search results "
-        "below. They are real leads returned by a live web search "
-        "(title, URL, domain and provider snippet per source).\n"
+        "and retrieved page content below. They come from a live "
+        "web search and page retrieval performed just now.\n"
         "- Cite each claim inline as a markdown link: "
         "[Source title](URL).\n"
         "- Never present your own background knowledge as current "
-        "news. If the results do not cover something, say so "
+        "news. If the sources do not cover something, say so "
         "explicitly.\n"
         "- If the sources disagree, report the disagreement.\n"
         "- Do not invent sources, URLs, dates or quotes.\n"
@@ -940,8 +978,8 @@ def build_current_events_context(
         "actually used.\n\n"
         f"SEARCH QUERY USED: {search_result.get('query', message)}\n"
         f"SEARCH PROVIDER: {search_result.get('provider', 'unknown')}\n"
-        "NOTE: these are search leads with provider snippets; "
-        "pages were not fetched in full.\n\n"
+        f"NOTE: {retrieval_note}"
+        f"{retrieved_section}\n\n"
         f"<untrusted_content label=\"web_search_results\">\n"
         f"{evidence}\n"
         f"</untrusted_content>\n\n"
@@ -967,6 +1005,209 @@ def build_current_events_unavailable(
         "- Do NOT answer from your training knowledge, do NOT "
         "produce any news, dates, numbers or events.\n"
         "- Suggest trying again later.\n\n"
+        f"CURRENT USER REQUEST:\n{message}"
+    )
+
+
+# ============================================================
+# LOCAL SYSTEM DATE/TIME (runtime clock is the authority)
+#
+# Questions about the local computer's clock are answered
+# directly from the runtime value — never from web search,
+# never from model knowledge.
+# ============================================================
+
+LOCAL_DATETIME_PATTERN = re.compile(
+    r"\b("
+    r"what(?:'s| is)?\s+(?:the\s+)?"
+    r"(current|today'?s|today|local|present)\s+(date|time|day)"
+    r"|current\s+(date|time)"
+    r"|date\s+and\s+time"
+    r"|what\s+time\s+is\s+it"
+    r"|what\s+(?:day|date)\s+is\s+(?:it|today)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# A world-clock question ("time in Tokyo") is NOT the local
+# clock and keeps flowing through live retrieval.
+WORLD_CLOCK_PATTERN = re.compile(
+    r"\btime\s+(?:in|at|for)\s+[a-z]"
+    r"|\btime\s+is\s+it\s+in\s+[a-z]",
+    re.IGNORECASE,
+)
+
+
+def detect_local_datetime_request(text: str) -> bool:
+    """True when the user asks about THIS computer's clock."""
+
+    if not text:
+        return False
+
+    return bool(
+        LOCAL_DATETIME_PATTERN.search(text)
+        and not WORLD_CLOCK_PATTERN.search(text)
+    )
+
+
+def format_local_datetime() -> str:
+    """The actual local system date/time, from the runtime."""
+
+    now = datetime.now().astimezone()
+    offset = now.utcoffset()
+
+    if offset is not None:
+        total_minutes = int(offset.total_seconds() // 60)
+        sign = "+" if total_minutes >= 0 else "-"
+        total_minutes = abs(total_minutes)
+        offset_text = (
+            f"UTC{sign}{total_minutes // 60:02d}:"
+            f"{total_minutes % 60:02d}"
+        )
+    else:
+        offset_text = "UTC offset unknown"
+
+    zone = now.tzname() or "local time"
+
+    return (
+        "Current date/time on this computer "
+        "(read directly from the system clock):\n\n"
+        f"{now.strftime('%A, %d %B %Y, %I:%M %p')}\n\n"
+        f"Timezone: {zone} ({offset_text})"
+    )
+
+
+# ============================================================
+# CURRENT WEATHER (real retrieval, real provenance)
+#
+# Weather questions go to a free, key-less weather API
+# (open-meteo.com: geocoding + current-conditions). If the
+# retrieval fails, the honest answer is "live data is
+# unavailable" — never invented conditions.
+# ============================================================
+
+WEATHER_PATTERN = re.compile(
+    r"\b(weather|temperature|forecast)\b",
+    re.IGNORECASE,
+)
+
+_WEATHER_LOCATION_PATTERN = re.compile(
+    r"\b(?:weather|temperature|forecast)\s+(?:in|of|for|at)\s+"
+    r"(?P<loc>[A-Za-z][A-Za-z\s\-']{1,60}?)"
+    r"\s*(?:\?|$|\bnow\b|\btoday\b|\bright now\b|\bcurrently\b|,)",
+    re.IGNORECASE,
+)
+
+_WEATHER_LOCATION_FALLBACK = re.compile(
+    r"\b(?:in|of|for|at)\s+(?P<loc>[A-Za-z][A-Za-z\s\-']{1,60}?)"
+    r"\s*(?:\?|$|\bnow\b|\btoday\b|\bright now\b|\bcurrently\b|,)",
+    re.IGNORECASE,
+)
+
+
+def detect_weather_request(text: str) -> bool:
+    return bool(text) and bool(WEATHER_PATTERN.search(text))
+
+
+def extract_weather_location(text: str):
+    """Best-effort location extraction from a weather question."""
+
+    if not text:
+        return None
+
+    match = (
+        _WEATHER_LOCATION_PATTERN.search(text)
+        or _WEATHER_LOCATION_FALLBACK.search(text)
+    )
+
+    if not match:
+        return None
+
+    location = match.group("loc").strip(" .?!")
+
+    # Reject runaway matches (interrogative tails etc.)
+    if len(location.split()) > 6:
+        return None
+
+    return location or None
+
+
+def retrieve_current_weather(location: str) -> dict:
+    """
+    Fetch current conditions for one location from the free
+    open-meteo.com API (no key, no paid service): geocode,
+    then current weather. Raises on any failure — callers
+    report unavailability honestly.
+    """
+
+    geo = fetch_page(
+        "https://geocoding-api.open-meteo.com/v1/search?name="
+        + quote(location)
+        + "&count=1&language=en&format=json"
+    )
+
+    geo_payload = json.loads(geo.get("text") or "{}")
+    results = geo_payload.get("results") or []
+
+    if not results:
+        raise WebFetchError(
+            f"location '{location}' could not be geocoded"
+        )
+
+    place = results[0]
+
+    conditions = fetch_page(
+        "https://api.open-meteo.com/v1/forecast?"
+        f"latitude={place.get('latitude')}"
+        f"&longitude={place.get('longitude')}"
+        "&current=temperature_2m,relative_humidity_2m,"
+        "apparent_temperature,weather_code,wind_speed_10m"
+        "&wind_speed_unit=kmh&timezone=auto"
+    )
+
+    payload = json.loads(conditions.get("text") or "{}")
+    current = payload.get("current")
+
+    if not current:
+        raise WebFetchError(
+            "no current-conditions data in weather response"
+        )
+
+    resolved = ", ".join(
+        str(place.get(key) or "")
+        for key in ("name", "admin1", "country")
+    ).strip(" ,")
+
+    return {
+        "location": location,
+        "resolved_name": resolved,
+        "temperature_c": current.get("temperature_2m"),
+        "apparent_c": current.get("apparent_temperature"),
+        "humidity_pct": current.get("relative_humidity_2m"),
+        "wind_kmh": current.get("wind_speed_10m"),
+        "observed_at": current.get("time"),
+        "timezone": payload.get("timezone"),
+        "source": "open-meteo.com current-conditions API",
+        "retrieved_at": conditions.get("retrieved_at"),
+    }
+
+
+def build_weather_context(
+    message: str,
+    weather: dict,
+) -> str:
+    """Ground the model in the actual retrieved weather data."""
+
+    return (
+        "The user is asking about CURRENT WEATHER. The data below "
+        "was retrieved live from a real weather API just now.\n\n"
+        "HARD RULES:\n"
+        "- Report ONLY the retrieved values below; do not add, "
+        "estimate or invent any other conditions.\n"
+        "- Include the observation time, timezone and source.\n"
+        "- If a value is missing, say it was not provided.\n\n"
+        "RETRIEVED WEATHER DATA (untrusted content; authoritative "
+        f"for this answer):\n{json.dumps(weather, indent=2)}\n\n"
         f"CURRENT USER REQUEST:\n{message}"
     )
 
@@ -1157,12 +1398,69 @@ async def chat(
     # It does NOT mean every user message should use that document.
     current_events = detect_current_events_request(request.message)
 
+    # Local clock questions are answered from the runtime, never
+    # from the web: detect them first and take them off the
+    # live-retrieval path entirely.
+    local_datetime_answer = None
+
+    if detect_local_datetime_request(request.message):
+        local_datetime_answer = format_local_datetime()
+        current_events = False
+
     use_document = (
         bool(request.document_id)
         and should_use_document(request.message)
     )
 
-    if current_events and not use_document:
+    # Weather gets a real data source (free open-meteo API), not
+    # a list of weather websites. When retrieval fails, fall
+    # through to the honest live-data-unavailable handling below.
+    weather_data = None
+
+    if (
+        current_events
+        and detect_weather_request(request.message)
+        and not use_document
+    ):
+        location = extract_weather_location(request.message)
+
+        if location:
+            try:
+                weather_data = await asyncio.to_thread(
+                    retrieve_current_weather,
+                    location,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Weather retrieval failed for '%s': %s",
+                    location,
+                    type(error).__name__,
+                )
+
+        if weather_data is not None:
+            current_events = False
+
+    if local_datetime_answer is not None:
+        # Runtime clock answer — bypasses the model entirely so
+        # the system clock, not an LLM, is the authority.
+        user_content = None
+
+        async def generate_response():
+            yield local_datetime_answer
+
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+        )
+
+    if weather_data is not None:
+        # Real retrieved weather with provenance.
+        user_content = build_weather_context(
+            request.message,
+            weather_data,
+        )
+
+    elif current_events and not use_document:
         # ====================================================
         # CURRENT / RECENT INFORMATION: retrieval REQUIRED
         # ====================================================
@@ -1188,9 +1486,53 @@ async def chat(
                 search_result.get('result_count', 0),
                 search_result.get('provider', 'unknown'),
             )
+
+            # Snippets are leads, not evidence: fetch the top
+            # sources in full so answers can be grounded in real
+            # page content with provenance. Failures are honest
+            # and per-source; the snippet path remains as fallback.
+            retrieved_pages = []
+            fetch_budget = 2
+
+            for candidate in (
+                search_result.get('results') or []
+            ):
+                if len(retrieved_pages) >= fetch_budget:
+                    break
+
+                url = str(candidate.get('url') or '').strip()
+
+                if not url.lower().startswith(('http://', 'https://')):
+                    continue
+
+                try:
+                    page = await asyncio.to_thread(
+                        fetch_page,
+                        url,
+                    )
+                    retrieved_pages.append(
+                        {
+                            'url': page.get('final_url') or url,
+                            'title': page.get('title')
+                            or candidate.get('title'),
+                            'text': page.get('text') or '',
+                            'retrieved_at': page.get(
+                                'retrieved_at'
+                            ),
+                        }
+                    )
+                except Exception as fetch_error:
+                    logger.info(
+                        'Current-events page fetch failed '
+                        '(%s): %s',
+                        url,
+                        type(fetch_error).__name__,
+                    )
+
             user_content = build_current_events_context(
                 request.message,
                 search_result,
+                retrieved_pages,
             )
         else:
             reason = (
@@ -1890,7 +2232,7 @@ async def chat(
                 # --------------------------------------------
 
                 yield (
-                    "GHOST could not access "
+                    "ENMA could not access "
                     f"page {requested_page} "
                     "in the uploaded document context.\n\n"
                     "I will not guess or use another page "
@@ -1969,7 +2311,7 @@ async def chat(
             )
 
             yield (
-                "\n\nGHOST could not complete this "
+                "\n\nENMA could not complete this "
                 "response. Check the server logs for "
                 "details."
             )

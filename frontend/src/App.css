@@ -2936,6 +2936,19 @@ textarea:focus-visible {
   cursor: default;
 }
 
+/* Stop control — replaces Send while ENMA is processing. */
+.send-button.stop-button {
+  background: rgba(255, 82, 82, 0.16);
+
+  color: #ff9b9b;
+
+  border: 1px solid rgba(255, 82, 82, 0.45);
+}
+
+.send-button.stop-button:hover {
+  background: rgba(255, 82, 82, 0.26);
+}
+
 .command-bar textarea {
   flex: 1;
 
@@ -4979,6 +4992,39 @@ body {
   opacity: 0.5;
 
   cursor: default;
+}
+
+/* Approve / Deny pair for paused tasks */
+.task-card-approval-actions {
+  margin-top: 10px;
+
+  display: flex;
+
+  gap: 8px;
+}
+
+.task-card-approve-btn {
+  background: rgba(22, 245, 165, 0.08);
+
+  border-color: rgba(22, 245, 165, 0.35);
+
+  color: #16f5a5;
+}
+
+.task-card-approve-btn:hover:not(:disabled) {
+  background: rgba(22, 245, 165, 0.16);
+}
+
+.task-card-deny-btn {
+  background: rgba(255, 82, 82, 0.08);
+
+  border-color: rgba(255, 82, 82, 0.35);
+
+  color: #ff9b9b;
+}
+
+.task-card-deny-btn:hover:not(:disabled) {
+  background: rgba(255, 82, 82, 0.16);
 }
 
 

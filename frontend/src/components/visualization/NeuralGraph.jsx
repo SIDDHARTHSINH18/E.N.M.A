@@ -193,7 +193,7 @@ export default function NeuralGraph({
     const outerRadius = 19;
 
     for (let i = 0; i < outerCount; i += 1) {
-      const seed = stableHash(`${node.id || "GHOST"}-${i}`);
+      const seed = stableHash(`${node.id || "ENMA"}-${i}`);
       const baseAngle =
         (i / outerCount) * Math.PI * 2 + ((seed % 100) / 100) * 0.4;
       const angle = baseAngle - time * 0.03;

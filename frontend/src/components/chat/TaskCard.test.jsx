@@ -42,7 +42,7 @@ describe('TaskCard lifecycle actions', () => {
     fireEvent.click(button);
 
     expect(onTaskAction).toHaveBeenCalledTimes(1);
-    expect(onTaskAction).toHaveBeenCalledWith('cancel', 'task-1');
+    expect(onTaskAction).toHaveBeenCalledWith('cancel', 'task-1', null);
   });
 
   it('offers Cancel on a PENDING task', () => {
@@ -59,7 +59,7 @@ describe('TaskCard lifecycle actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry task' }));
 
     expect(onTaskAction).toHaveBeenCalledTimes(1);
-    expect(onTaskAction).toHaveBeenCalledWith('retry', 'task-1');
+    expect(onTaskAction).toHaveBeenCalledWith('retry', 'task-1', null);
   });
 
   it('offers no lifecycle action on COMPLETED and CANCELLED tasks', () => {

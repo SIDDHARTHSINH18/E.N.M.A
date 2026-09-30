@@ -52,6 +52,56 @@ _MIN_REQUEST_WORDS = 3
 
 _MAX_TITLE_CHARS = 80
 
+# Obvious single-file filesystem requests map deterministically to
+# fs_read_file / fs_write_file: clarification is never needed, and a
+# nonexistent file is an expected runtime failure to report honestly.
+_FILENAME_PATTERN = r"[A-Za-z0-9_\-][A-Za-z0-9_\- .]*\.[A-Za-z0-9]{1,10}"
+_FILE_NAMED_PATTERN = (
+    r"\bfile\b\s+(?:named\s+|called\s+)?(?P<name>"
+    + _FILENAME_PATTERN
+    + ")"
+)
+_READ_FILE_PATTERN = re.compile(
+    r"\b(read|open|view|show|display)\b[^\n]{0,80}?"
+    + _FILE_NAMED_PATTERN,
+    re.IGNORECASE,
+)
+_READ_FILE_SHORT_PATTERN = re.compile(
+    r"\bread\b\s+(?:the\s+)?file\s+(?P<name>" + _FILENAME_PATTERN + ")",
+    re.IGNORECASE,
+)
+# "Read this_file_definitely_does_not_exist_98765.txt" — verb
+# directly followed by the filename, without the word "file".
+_READ_FILE_DIRECT_PATTERN = re.compile(
+    r"\bread\b\s+(?:the\s+)?(?:from\s+)?(?P<name>" + _FILENAME_PATTERN + ")",
+    re.IGNORECASE,
+)
+_WRITE_FILE_PATTERN = re.compile(
+    r"\b(creat\w*|writ\w*|mak\w*)\b[^\n]{0,120}?" + _FILE_NAMED_PATTERN,
+    re.IGNORECASE,
+)
+# "Create enma_test.txt containing exactly X" — verb directly
+# followed by the filename, without the word "file".
+_WRITE_FILE_DIRECT_PATTERN = re.compile(
+    r"\b(?:creat\w*|writ\w*|touch)\s+(?:the\s+)?(?:new\s+)?"
+    r"(?P<name>" + _FILENAME_PATTERN + ")",
+    re.IGNORECASE,
+)
+_EXACT_CONTENT_PATTERN = re.compile(
+    r"containing exactly\s+(?P<content>.+?)"
+    r"(?=,\s*then\b|[.\n]|$)",
+    re.IGNORECASE,
+)
+
+# Boilerplate task framing ("Create a task that ...") is stripped
+# before filesystem-intent matching so the leading verb does not
+# masquerade as a write request.
+_TASK_FRAMING_PATTERN = re.compile(
+    r"^\s*(?:please\s+)?(?:create|make|write)\s+(?:me\s+)?"
+    r"(?:a\s+)?task\s+(?:that|to|which)\s+",
+    re.IGNORECASE,
+)
+
 
 class PlanningSource(Enum):
     """Where the planning result came from."""
@@ -189,11 +239,17 @@ class Planner:
                 request="",
                 ready=False,
                 questions=[
-                    "What would you like GHOST to do?"
+                    "What would you like ENMA to do?"
                 ],
                 source=PlanningSource.DETERMINISTIC,
                 planned_at=planned_at,
             )
+
+        obvious = self._obvious_filesystem_plan(
+            request_text, planned_at
+        )
+        if obvious is not None:
+            return obvious
 
         if self._orchestrator is None:
             return self._deterministic_plan(
@@ -224,6 +280,105 @@ class Planner:
     # MODEL PATH
     # ========================================================
 
+    def _obvious_filesystem_plan(
+        self,
+        request_text: str,
+        planned_at: str,
+    ) -> Optional[PlanningResult]:
+        """
+        Deterministic mapping for obvious single-file
+        filesystem requests. A request like "read
+        this_file_definitely_does_not_exist.txt" is fully
+        specified: the tool result — success or the real
+        failure — is the answer, so no clarification round
+        is generated.
+        """
+
+        matching_text = _TASK_FRAMING_PATTERN.sub(
+            "", request_text
+        ) or request_text
+
+        write_match = (
+            _WRITE_FILE_PATTERN.search(matching_text)
+            or _WRITE_FILE_DIRECT_PATTERN.search(matching_text)
+        )
+        read_match = (
+            _READ_FILE_PATTERN.search(matching_text)
+            or _READ_FILE_SHORT_PATTERN.search(matching_text)
+            or _READ_FILE_DIRECT_PATTERN.search(matching_text)
+        )
+
+        if write_match and not read_match:
+            filename = write_match.group("name").strip()
+            content_match = _EXACT_CONTENT_PATTERN.search(
+                matching_text
+            )
+            if content_match:
+                content = content_match.group("content").strip()
+                content = content.strip("\"'`")
+                content = content.rstrip(".")
+            else:
+                content = ""
+            return PlanningResult(
+                request=request_text,
+                ready=True,
+                task_title=(
+                    f"Write file {filename}"[:_MAX_TITLE_CHARS].strip()
+                ),
+                task_description=request_text,
+                steps=[
+                    PlannedStep(
+                        description=(
+                            f"Write {filename} with the requested "
+                            "content using fs_write_file"
+                        ),
+                        tool="fs_write_file",
+                        params={"path": filename, "content": content},
+                    ),
+                    PlannedStep(
+                        description=(
+                            f"Read {filename} back with fs_read_file "
+                            "to verify the written content"
+                        ),
+                        tool="fs_read_file",
+                        params={"path": filename},
+                    ),
+                ],
+                assumptions=[
+                    "Filesystem paths resolve relative to the "
+                    "workspace directory."
+                ],
+                source=PlanningSource.DETERMINISTIC,
+                planned_at=planned_at,
+            )
+
+        if read_match and not write_match:
+            filename = read_match.group("name").strip()
+            return PlanningResult(
+                request=request_text,
+                ready=True,
+                task_title=(
+                    f"Read file {filename}"[:_MAX_TITLE_CHARS].strip()
+                ),
+                task_description=request_text,
+                steps=[
+                    PlannedStep(
+                        description=(
+                            f"Read {filename} with fs_read_file; if "
+                            "it does not exist, report the real "
+                            "tool failure"
+                        ),
+                        tool="fs_read_file",
+                        params={"path": filename},
+                    ),
+                ],
+                assumptions=[],
+                source=PlanningSource.DETERMINISTIC,
+                planned_at=planned_at,
+            )
+
+        return None
+
     async def _call_model(
         self,
         request_text: str,
@@ -238,7 +393,7 @@ class Planner:
         """
 
         message = (
-            "You are the GHOST Planner. Decide whether the "
+            "You are the ENMA Planner. Decide whether the "
             "request below has enough information to turn "
             "into a task.\n\n"
             "Reply with ONLY a JSON object, no other text:\n"
@@ -258,6 +413,11 @@ class Planner:
             "questions; 7 is an absolute maximum.\n"
             "- Prefer sensible defaults over questions "
             "when the request is actionable.\n"
+            "- Never ask questions for obvious filesystem "
+            "operations: reading or writing a named file "
+            "is always actionable, even if the file may "
+            "not exist — the tool's real result (including "
+            "its failure) is the expected answer.\n"
             "- If you provide a plan, set "
             "enough_information to true.\n"
             "- Steps are proposals only; they are not "
@@ -383,7 +543,7 @@ class Planner:
                 ready=False,
                 questions=[
                     "Could you describe what you would like "
-                    "GHOST to do in a bit more detail?"
+                    "ENMA to do in a bit more detail?"
                 ],
                 source=PlanningSource.DETERMINISTIC,
                 planned_at=planned_at,

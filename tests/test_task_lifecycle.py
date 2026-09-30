@@ -219,7 +219,7 @@ class TestTaskLifecycleAPI:
     def test_owner_cancels_pending_task(self, client, sessions, fallback_planner):
         ha, hb = sessions
 
-        task_id = self._create(client, ha, "read the file README.md")
+        task_id = self._create(client, ha, "organize my project notes")
         r = client.post(f"/api/tasks/{task_id}/cancel", headers=ha)
 
         assert r.status_code == 200, r.text
@@ -263,7 +263,7 @@ class TestTaskLifecycleAPI:
 
         ha, _ = sessions
         task_id = self._create(
-            client, ha, "read the file README.md"
+            client, ha, "organize my project notes"
         )
 
         # Deterministically fail the task through the service's

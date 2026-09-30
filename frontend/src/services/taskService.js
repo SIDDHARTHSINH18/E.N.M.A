@@ -33,6 +33,27 @@ const taskService = {
   getTask: async (taskId) => {
     return apiService.get(`/api/tasks/${encodeURIComponent(taskId)}`);
   },
+
+  /**
+   * Record an approval decision for a pending approval record.
+   * @param {string} approvalId
+   * @param {boolean} approved
+   */
+  decideApproval: async (approvalId, approved) => {
+    return apiService.post(
+      `/api/approvals/${encodeURIComponent(approvalId)}/decision`,
+      { approved }
+    );
+  },
+
+  /**
+   * Resume a paused task after approval (actually executes the
+   * approved steps through the task runner).
+   * @param {string} taskId
+   */
+  resumeTask: async (taskId) => {
+    return apiService.post(`/api/tasks/${encodeURIComponent(taskId)}/resume`);
+  },
 };
 
 export default taskService;
