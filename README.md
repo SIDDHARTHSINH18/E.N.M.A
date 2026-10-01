@@ -1,49 +1,146 @@
-# GHOST — Personal AI Operating System (prototype)
+# ENMA — Personal AI Operating System
 
-GHOST is a privacy-first, permissioned AI layer. This repository currently
-contains the **V0.5 prototype**: a FastAPI backend (document RAG + persistent
-memory + streaming chat via NVIDIA Nemotron) and a React frontend
-(knowledge-graph UI, chat, document upload).
+ENMA is a local-first AI orchestration system designed around a simple principle:
 
-- Architecture assessment: `docs/01-architecture-assessment.md`
-- Threat model: `docs/04-threat-model.md`
-- Privacy assessment: `docs/05-privacy-assessment.md`
-- Migration plan (M0 → V1 → …): `docs/03-migration-plan.md`
-- Roadmap: `docs/06-mvp-roadmap.md`
+> **AI should reason about work, but the system must execute, verify, and report what actually happened.**
 
-The legacy Gradio experiment lives in `legacy/gradio-app/` and is not part
-of the GHOST backend.
+It combines task planning, model routing, permissions, tools, memory, filesystem operations, auditability, and a Windows desktop shell into one extensible system.
 
----
+## What ENMA is
 
-## Prerequisites
+ENMA is not intended to be a generic chatbot. Its architecture separates:
 
-- Python 3.11+ (a local `venv/` may already exist in this folder)
-- Node.js 18+ (frontend)
-- An NVIDIA API key (Nemotron via `https://integrate.api.nvidia.com/v1`)
-
-## 1. Configure
-
-```bat
-copy .env.example .env
+```
+User request
+    ↓
+Task / intent normalization
+    ↓
+Execution planning
+    ↓
+Permission checks
+    ↓
+Tool execution
+    ↓
+Validation
+    ↓
+Audit
+    ↓
+Evidence-backed result
 ```
 
-Then edit `.env` and set `NVIDIA_API_KEY`.
+The system is designed so an AI-generated plan is not treated as proof that an operation succeeded.
 
-The backend **refuses to start** without it.
+## Core engineering principles
 
-## 2. Run the backend
+- **Evidence over claims** — execution results determine status.
+- **Human authority** — sensitive actions require explicit permission.
+- **Fail closed** — unknown or unsafe conditions do not silently fall through.
+- **Provider agnostic** — model providers are behind a common routing layer.
+- **Auditable execution** — important actions and provider attempts are recorded with secret-safe metadata.
+- **Local first** — the desktop application owns the local execution boundary.
+- **Truthful failure** — inability to verify an operation is reported instead of being presented as success.
 
-```bat
-python -m venv venv
-venv\Scripts\pip install -r requirements.txt
-venv\Scripts\uvicorn backend.main:app --host 127.0.0.1 --port 8000
+## Current capabilities
+
+### Task execution
+
+- Task planning and execution
+- Dependency-aware task steps
+- Cooperative cancellation
+- Approval / deny workflow
+- Failed-dependency blocking
+- Persistence and recovery
+- Async execution boundary for synchronous tools
+- Filesystem operations with post-write verification
+
+### AI model routing
+
+ENMA uses a provider abstraction rather than coupling the application to one model vendor.
+
+The router supports explicit provider selection and controlled fallback. Automatic fallback is limited to transient failures such as rate limits, timeouts, network failures, provider unavailability, and model unavailability. Authentication failures, invalid requests, and unknown failures stop instead of being blindly retried elsewhere.
+
+### Tools and permissions
+
+The system includes a centralized tool registry and permission policy layer.
+
+Sensitive filesystem operations are guarded, and secret/configuration files are protected from unintended reads. Tool execution is designed to remain observable and auditable.
+
+### Memory and retrieval
+
+ENMA includes persistent memory and document/retrieval capabilities with graceful degradation when optional ML dependencies are unavailable. The application does not fabricate embeddings when the ML layer cannot load.
+
+### Desktop application
+
+The Windows desktop shell uses Electron and packages the existing React frontend together with the FastAPI backend and runtime.
+
+```
+Electron desktop shell
+        │
+        ├── React / Vite frontend
+        │
+        └── FastAPI backend
+                │
+                ├── Task system
+                ├── Model router
+                ├── Tools
+                ├── Permissions
+                ├── Memory
+                └── Audit
 ```
 
-Check: <http://127.0.0.1:8000/health> should return `{"status": "ok", ...}`.
-A live provider check (network call) is at `/health/provider`.
+The desktop packaging path includes configuration reconciliation and backend-process management rather than simply wrapping a development server.
 
-## 3. Run the frontend
+## Engineering focus
+
+ENMA has been used to work through real reliability problems including:
+
+- provider fallback semantics
+- authentication-vs-transient failure handling
+- task cancellation
+- dependency propagation
+- truthful filesystem verification
+- configuration upgrades without overwriting credentials
+- desktop backend port detection
+- packaged backend lifecycle
+- optional ML dependency isolation
+- secret-safe audit metadata
+- Windows desktop packaging
+
+The repository intentionally documents limitations and deferred work instead of presenting unfinished capabilities as complete.
+
+## Repository structure
+
+```
+backend/
+  api/
+  core/
+  analyzer/
+  diagnostics/
+  fix_engine/
+  runtimes/
+  validation/
+  knowledge/
+  sandbox/
+  providers/
+
+frontend/
+desktop/
+docs/
+tests/
+infrastructure/
+```
+
+## Development
+
+### Backend
+
+```bat
+python -m venv .venv
+.venv\\Scripts\\pip install -r requirements.txt
+.venv\\Scripts\\uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+### Frontend
 
 ```bat
 cd frontend
@@ -51,60 +148,48 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>.
+### Tests
 
-## 4. Run the tests
+Backend tests:
 
 ```bat
-venv\Scripts\pip install -r requirements-dev.txt
-venv\Scripts\python -m pytest
+python -m pytest
 ```
 
-## What works today
+Desktop tests:
 
-- Chat with streaming responses (cloud model: NVIDIA Nemotron)
-- Multi-turn conversation (history sent with each request)
-- PDF / DOCX / TXT upload → chunking → embeddings → hybrid retrieval
-- Exact-page questions with deterministic page lookup; missing pages are
-  refused, never hallucinated
-- Whole-document hierarchical summarization (cached per document)
-- Persistent keyword memory with duplicate handling
-- Memory management: view, delete one, forget all (`GET/DELETE /api/memory`)
-- Document management: list uploaded documents, delete one
-  (`GET/DELETE /api/documents`), with post-deletion verification
-- Knowledge-graph visualization of documents/memory/tools
-  (memory labels only — content stays on the memory API)
-
-## Resource limits (configurable)
-
-There is **no limit on the number of documents**. Limits are real resource
-protections, configured via environment variables (see `.env.example`):
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `GHOST_MAX_UPLOAD_MB` | `50` | Maximum size of one uploaded file |
-| `GHOST_MAX_TOTAL_STORAGE_MB` | `500` | Aggregate cap across all uploaded documents |
-| `GHOST_ALLOWED_EXTENSIONS` | `.pdf,.docx,.txt` | Uploadable file types |
-
-Document processing is serialized (`upload_lock`) so concurrent uploads
-queue instead of multiplying memory/CPU pressure.
-
-## Security & privacy status (read before exposing this to anyone)
-
-- **No authentication yet** (planned M2) — bind to loopback only; anything on
-  this machine can call the API.
-- Every message/document/memory is sent to the NVIDIA cloud API; no
-  classification/redaction yet (planned V4). See
-  `docs/05-privacy-assessment.md`.
-- `backend/data/memory.json` stores memories in **plaintext**.
-- Never commit or share your `.env`.
-
-## Repository layout
-
+```bat
+cd desktop
+npm test
 ```
-backend/          FastAPI app (api/, core/, providers/)
-frontend/         React + Vite UI
-docs/             Architecture, threat model, privacy, roadmap
-legacy/gradio-app/ Quarantined Gradio experiment (not maintained)
-tests/            pytest suite
+
+Frontend production build:
+
+```bat
+cd frontend
+npm run build
 ```
+
+## Security boundary
+
+ENMA executes local operations, so execution is treated as a security-sensitive capability.
+
+The project includes permission checks, secret-file protections, cancellation, audit records, and verification boundaries. Production deployments should still be reviewed according to the capabilities and trust model enabled by the operator.
+
+Never commit local secrets or credential-bearing configuration files.
+
+## Project status
+
+ENMA is an actively developed engineering project. The Windows desktop application, task system, model routing, permissions, tools, persistence, audit, and verification layers are implemented incrementally and tested as separate boundaries.
+
+Some capabilities remain intentionally deferred rather than represented as complete.
+
+## Direction
+
+The long-term direction is an extensible personal AI operating system where specialized capabilities can be added without coupling the core runtime to one model provider or one task type.
+
+Potential future extensions include additional skills, richer execution specifications, repository-level development workflows, and specialized capabilities such as quantum software debugging.
+
+---
+
+**Built with:** Python · FastAPI · React · Vite · Electron · SQLite · pytest
