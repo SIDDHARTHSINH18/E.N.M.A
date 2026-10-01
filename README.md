@@ -1,5 +1,12 @@
 # ENMA — Personal AI Operating System
 
+<details>
+<summary><strong>⚡ Quick navigation</strong></summary>
+
+**Explore:** [What it is](#what-it-is) · [Architecture](#architecture) · [Capabilities](#current-capabilities) · [Engineering evidence](#engineering-evidence) · [Security](#security-boundary) · [Run locally](#development)
+
+</details>
+
 ENMA is a local-first AI orchestration system designed around a simple principle:
 
 > **AI should reason about work, but the system must execute, verify, and report what actually happened.**
@@ -193,3 +200,11 @@ Potential future extensions include additional skills, richer execution specific
 ---
 
 **Built with:** Python · FastAPI · React · Vite · Electron · SQLite · pytest
+
+
+<details>
+<summary><strong>👀 Reading this repository</strong></summary>
+
+If you have only one minute, read the opening principle, then inspect the architecture and verification/testing sections. The project is intentionally documented around **what the system can demonstrate**, not what it is intended to become.
+
+</details>
