@@ -208,3 +208,23 @@ Potential future extensions include additional skills, richer execution specific
 If you have only one minute, read the opening principle, then inspect the architecture and verification/testing sections. The project is intentionally documented around **what the system can demonstrate**, not what it is intended to become.
 
 </details>
+
+<details>
+<summary><strong>🧠 Interactive architecture map</strong></summary>
+
+```mermaid
+flowchart LR
+    U[User] --> N[Normalize]
+    N --> P[Plan]
+    P --> A[Permissions]
+    A --> T[Tools]
+    T --> X[Execute]
+    X --> V[Validate]
+    V --> R[Report evidence]
+    V --> AU[Audit]
+    M[Model Router] --> P
+```
+
+The key idea is that **reasoning, execution, validation, and audit are separate boundaries**.
+
+</details>
