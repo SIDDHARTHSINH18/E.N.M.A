@@ -1,32 +1,21 @@
-## Problem
+## What changed?
 
-<!-- What concrete problem or documentation gap does this PR address? -->
+<!-- A short explanation of the problem and your solution. -->
 
-## Change
+## How did you test it?
 
-<!-- Summarize the focused implementation. -->
+<!-- List the commands you actually ran and their results. -->
 
-## Validation
+- [ ] Backend tests
+- [ ] Frontend tests
+- [ ] Frontend build
+- [ ] Desktop tests
+- [ ] Windows/package check, if this change affects it
+- [ ] Documentation-only change
 
-- [ ] Backend tests: `python -m pytest`
-- [ ] Frontend tests: `npm test`
-- [ ] Frontend build: `npm run build`
-- [ ] Desktop tests: `npm test`
-- [ ] Windows/package validation, if affected
-- [ ] Documentation-only change; code checks are not applicable
+## Anything reviewers should know?
 
-Commands and results:
+<!-- Mention risks, limitations, untested paths or follow-up work. -->
 
-```text
-Add the commands actually executed and their results.
-```
-
-## Security and privacy
-
-- [ ] No credentials, personal data, client data, or local runtime files added
-- [ ] Permission and execution boundaries are unchanged or documented
-- [ ] New dependencies and external calls are justified
-
-## Limitations and risk
-
-<!-- State what remains unverified, platform-specific, or intentionally deferred. -->
+- [ ] I did not add credentials, personal data, client data or local runtime files.
+- [ ] I checked that permission and security boundaries are unchanged or clearly documented.
