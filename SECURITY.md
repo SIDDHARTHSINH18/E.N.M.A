@@ -1,38 +1,15 @@
-# Security Policy
+# Security
 
-## Reporting a vulnerability
+ENMA can work with local files, tools and model providers, so security issues are taken seriously.
 
-Please do not report suspected vulnerabilities through a public GitHub issue.
+If you find a vulnerability, please email **siddharthsinhjvaghela@gmail.com** instead of opening a public issue. Include what you found, how to reproduce it and which part of ENMA is affected. A small proof of concept is helpful, but please remove real credentials and personal data.
 
-Email **siddharthsinhjvaghela@gmail.com** with:
+I will acknowledge the report as soon as I can, normally within seven days. The time needed for a fix will depend on the impact and whether the problem can be reproduced.
 
-- the affected component and version or commit;
-- a concise description of the issue and its impact;
-- reproduction steps or a minimal proof of concept;
-- any suggested mitigation, if available.
+## A note about ENMA's boundaries
 
-Do not include real credentials, personal information, or data belonging to another person.
+ENMA has permission checks, audit records, cancellation and validation, but it is not a complete sandbox for untrusted code. Anything running locally still needs to be treated according to the access it has on the computer.
 
-You should receive an acknowledgement within seven days. Fix timelines depend on severity, reproducibility, and the affected execution boundary.
+Please never commit API keys, passwords, tokens, private keys, personal data or client information. Use the ignored `.env` file for local development secrets. If a real secret ever reaches Git history, revoke it immediately before cleaning up the repository.
 
-## Security boundaries
-
-ENMA is a local-first desktop application that can coordinate models, tools, filesystem operations, and local processes. Permission checks, audit records, cancellation, and post-operation validation reduce risk, but they do not make the host an unrestricted sandbox.
-
-Treat locally executed tools and third-party model providers according to their actual privileges and privacy policies. Use test data during development and grant only the permissions required for a task.
-
-## Credentials and sensitive data
-
-- Never commit API keys, access tokens, passwords, private keys, or credential-bearing configuration.
-- Store development secrets in ignored local configuration such as `.env`.
-- Use placeholders in examples and documentation.
-- Revoke and rotate any credential that may have entered Git history.
-- Remove personal, client, and production data from bug reports and test fixtures.
-
-## Supported code
-
-Security fixes are applied to the current `main` branch. Historical releases and local forks may not receive updates.
-
-## Responsible disclosure
-
-Please allow reasonable time to investigate and correct a confirmed issue before publishing technical details.
+Security fixes are made against the current `main` branch.
