@@ -1,16 +1,16 @@
-# Contributing to ENMA
+# Contributing
 
-Thank you for helping improve ENMA. Contributions should strengthen real functionality, verification, documentation, testing, or security—not activity metrics.
+Thanks for taking the time to improve ENMA.
 
-## Before starting
+Useful contributions include bug fixes, tests, clearer documentation and small changes that make the application safer or easier to understand. Please avoid empty commits or changes made only to increase activity.
 
-1. Check existing issues and pull requests for overlapping work.
-2. For a large change, open an issue describing the problem, proposed boundary, risks, and validation plan.
-3. Keep credentials, personal data, proprietary material, and local runtime files out of the repository.
+## Before you start
 
-## Development setup
+Check the existing issues and pull requests first. If the change is large, open an issue so we can agree on the problem and the safest approach before a lot of work is done.
 
-ENMA currently targets a Windows desktop workflow while most backend and frontend development can be performed independently.
+Never include API keys, personal information, client data or local runtime files in a contribution.
+
+## Running the project
 
 ### Backend
 
@@ -37,40 +37,23 @@ npm ci
 npm test
 ```
 
-Packaging and host-integration changes must also be validated on Windows. Do not report a packaged build as verified when only platform-independent tests ran.
+ENMA's desktop packaging is built for Windows. If your change affects packaging or startup, please test it on Windows and say exactly what you verified.
 
-## Working agreement
+## Sending a change
 
-- Create a focused branch such as `fix/router-auth-failure` or `docs/security-boundary`.
-- Keep each pull request limited to one coherent outcome.
-- Add or update tests for behavioral changes.
-- Preserve truthful failure states and existing permission boundaries.
-- Avoid drive-by dependency upgrades and unrelated formatting changes.
-- Do not modify production credentials, local data, or another process to make a test pass.
-- Document limitations that remain after the change.
+- Keep the branch and pull request focused on one problem.
+- Add tests when behaviour changes.
+- Explain why the change is needed, not only what files changed.
+- Mention the commands you ran and the results.
+- Be honest about anything you could not test.
+- Keep permission checks and failure messages intact unless the change specifically improves them.
 
-## Commit messages
-
-Use a concise, descriptive subject:
+Commit messages should be short and specific. For example:
 
 ```text
-type(scope): outcome
+fix(router): stop fallback after authentication failure
+test(tasks): cover cancellation during tool execution
+docs(security): explain local execution limits
 ```
 
-Examples:
-
-- `fix(router): stop fallback after authentication failure`
-- `test(tasks): cover cancellation during tool execution`
-- `docs(security): clarify local execution boundary`
-
-## Pull requests
-
-Include:
-
-- the problem being solved;
-- the implementation approach;
-- tests and commands executed;
-- security, privacy, or compatibility effects;
-- known limitations and rollback notes when relevant.
-
-A plan, generated explanation, or passing mock alone is not proof that an external or packaged operation succeeded. Report only the validation that actually ran.
+A generated plan or mock result is not proof that something worked. Please only claim the checks you actually ran.
